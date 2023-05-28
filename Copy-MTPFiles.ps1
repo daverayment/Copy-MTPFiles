@@ -28,6 +28,7 @@
 	.\Copy-MTPFiles.ps1 -List
 #>
 
+[CmdletBinding()]
 param(
 	[switch]$Confirm,
 
@@ -37,6 +38,7 @@ param(
 
 	[string]$DeviceName,
 
+	[ValidateNotNullOrEmpty()]
 	[string]$SourceDirectory,
 
 	[string]$DestinationDirectory = (Get-Location).Path,
@@ -69,6 +71,60 @@ function Write-Devices {
 			Write-Host "Found device. Name: $deviceName, Type: $deviceType"
 		}
 	}
+}
+
+# Ensure our transfers do not overwrite existing files in the destination directory. We append a unique numeric suffix like Windows' copy routine.
+function Get-UniqueFilename {
+	param(
+		[Parameter(Mandatory = $true)]
+		[Alias("Item")]
+		$FileItem,
+
+		[Parameter(Mandatory = $true)]
+		[System.__ComObject]
+		$DestinationFolder
+	)
+
+	$tempDirectory = Join-Path -Path $Env:TEMP -ChildPath "TempCopyMTPFiles"
+	if (-not (Test-Path -Path $tempDirectory)) {
+		New-Item -Path $tempDirectory -ItemType Directory | Out-Null
+	}
+	$tempFolder = $shell.NameSpace($tempDirectory)
+
+	$destinationPath = Join-Path -Path $DestinationDirectory -ChildPath $FileItem.Name
+
+    # Check if a file with the same name already exists in the destination directory
+    if (Test-Path -Path $destinationPath) {
+        $baseName = [IO.Path]::GetFileNameWithoutExtension($FileItem.Name)
+        $extension = [IO.Path]::GetExtension($FileItem.Name)
+        $counter = 1
+
+        # Generate a new filename with a unique number suffix.
+        do {
+            $newName = "$baseName ($counter)$extension"
+            $destinationPath = Join-Path -Path $DestinationDirectory -ChildPath $newName
+            $counter++
+        }
+        while (Test-Path -Path $destinationPath)
+
+        Write-Warning "A file with the same name already exists. Renaming to $newName."
+
+		# Copy or move the file to our temporary directory so it can be renamed without altering the source directory.
+		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $FileItem.Name
+		$tempFilePathNew = Join-Path -Path $tempDirectory -ChildPath $newName
+		if ($Move) {
+			$tempFolder.MoveHere($FileItem)
+		}
+		else {
+			$tempFolder.CopyHere($FileItem)
+		}
+
+		# Perform the rename and update the path of the item.
+		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
+		$FileItem = $tempFolder.Items() | Where-Object { $_.Path -eq $tempFilePathNew }
+    }
+
+	return $FileItem
 }
 
 # Retrieve an MTP folder by path.
@@ -107,47 +163,42 @@ function Get-FolderByPath {
 	return $ParentFolder
 }
 
-Write-Host "Copy-MTPFiles started."
+Write-Output "Copy-MTPFiles started."
 
 # Retrieve the portable devices connected to the computer via COM.
 $shell = New-Object -ComObject Shell.Application
 if ($null -eq $shell) {
-	Write-Error "Failed to create a COM Shell Application object."
-	exit
+	throw "Failed to create a COM Shell Application object."
 }
 $portableDevices = $shell.NameSpace(17).Items()
 $mtpDevices = $portableDevices | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 
 if ($List) {
 	Write-Devices -MTPDevices $mtpDevices
-	exit
+	return
 }
 
 if (-not $PSBoundParameters.ContainsKey("SourceDirectory") -or [string]::IsNullOrEmpty($SourceDirectory)) {
-	Write-Error "No source directory provided. Please use the -SourceDirectory parameter to set the device folder from which to transfer files."
-	exit
+	throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the device folder from which to transfer files."
 }
 
 if ($mtpDevices.Count -eq 0) {
-	Write-Error "No compatible devices found. Please connect a device in Transfer Files mode."
-	exit
+	throw "No compatible devices found. Please connect a device in Transfer Files mode."
 }
 elseif ($mtpDevices.Count -gt 1) {
 	if ($DeviceName) {
 		$device = $mtpDevices | Where-Object { $_.Name -ieq $DeviceName }
 
 		if (-not $device) {
-			Write-Error "Device ""$DeviceName"" not found."
-			exit
+			throw "Device ""$DeviceName"" not found."
 		}
 	}
 	else {
-		Write-Error "Multiple MTP-compatible devices found. Please use the -DeviceName parameter to specify the device to use. Use the -List switch to list all compatible device names."
-		exit
+		throw "Multiple MTP-compatible devices found. Please use the 'DeviceName' parameter to specify the device to use. Use the 'List' switch to list all compatible device names."
 	}
 }
 else {
-	$device = $mtpDevices[0]
+	$device = $mtpDevices
 }
 
 $movedCopied = "copied"
@@ -158,20 +209,19 @@ if ($Move) {
 $deviceName = $device.Name
 $deviceType = $device.Type
 
-Write-Host "Using $deviceName ($deviceType)."
+Write-Verbose "Using $deviceName ($deviceType)."
 
 # Retrieve the root folder of the attached device
 $deviceRoot = $shell.Namespace($device.Path)
-Write-Host "Found device root folder."
+Write-Debug "Found device root folder."
 
 # Retrieve the source folder on the device
 $sourceFolder = Get-FolderByPath -ParentFolder $deviceRoot -Path $SourceDirectory
 if ($null -eq $sourceFolder) {
-	Write-Error "Source folder ""$SourceDirectory"" not found. Please check you have selected the Transfer Files mode on the device and the folder is present."
-	exit
+	throw "Source folder ""$SourceDirectory"" not found. Please check you have selected the Transfer Files mode on the device and the folder is present."
 }
 
-Write-Host "Found source folder ""$SourceDirectory""."
+Write-Debug "Found source folder ""$SourceDirectory""."
 
 # Retrieve the destination folder, creating it if it doesn't already exist
 if (-not (Test-Path -Path $DestinationDirectory)) {
@@ -179,13 +229,12 @@ if (-not (Test-Path -Path $DestinationDirectory)) {
 		New-Item -Path $DestinationDirectory -ItemType Directory
 	}
 	catch {
-		Write-Error "Destination directory ""$DestinationDirectory"" was not found and could not be created. Please check you have the necessary permissions."
-		exit
+		throw "Destination directory ""$DestinationDirectory"" was not found and could not be created. Please check you have the necessary permissions."
 	}
-	Write-Host "Created new directory ""$DestinationDirectory""."
+	Write-Output "Created new directory ""$DestinationDirectory""."
 }
 else {
-	Write-Host "Found destination directory ""$DestinationDirectory""."
+	Write-Debug "Found destination directory ""$DestinationDirectory""."
 }
 
 $destinationFolder = $shell.NameSpace($DestinationDirectory)
@@ -213,8 +262,8 @@ if ($Confirm)
 		Write-Progress -Activity "Scanning files" -Status "$i out of $totalItems processed" -PercentComplete ($i / $totalItems * 100)
 	}
 	if ($filesToTransfer.Count -eq 0) {
-		Write-Host "No files to transfer."
-		exit
+		Write-Output "No files to transfer."
+		return
 	}
 	else {
 		$confirmation = Read-Host "$($filesToTransfer.Count) files will be moved from ""$SourceDirectory"" to ""$DestinationDirectory"". Proceed (Y/N)?"
@@ -224,6 +273,8 @@ if ($Confirm)
 			$i = 0
 
 			foreach ($item in $filesToTransfer) {
+				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+	
 				if ($Move) {
 					$destinationFolder.MoveHere($item)
 				}
@@ -231,7 +282,7 @@ if ($Confirm)
 					$destinationFolder.CopyHere($item)
 				}
 
-				Write-Host $item.Name $movedCopied "to destination."
+				Write-Output "$item.Name $movedCopied to destination."
 
 				# Progress bar
 				$i++
@@ -239,17 +290,18 @@ if ($Confirm)
 			}
 		}
 		else {
-			Write-Host "Transfer cancelled."
+			Write-Output "Transfer cancelled."
 		}
 	}
 }
 else {
-	$i = 0
 	# Transfer files immediately, without scanning or confirmation.
+	$i = 0
 	foreach ($item in $sourceFolder.Items()) {
 		foreach ($p in $FilenamePatterns) {
 			if ($item.Name -like $p) {
 				$i++
+				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
 				if ($Move) {
 					$destinationFolder.MoveHere($item)
 				}
@@ -257,17 +309,17 @@ else {
 					$destinationFolder.CopyHere($item)
 				}
 
-				Write-Host $item.Name $movedCopied "to destination."
+				Write-Output "$item.Name $movedCopied to destination."
 				break
 			}
 		}
 	}
 	if ($i -eq 0) {
-		Write-Host "No matching files found."
+		Write-Output "No matching files found."
 	}
 	else {
-		Write-Host $i "files" $movedCopied "."
+		Write-Output "$i file(s) $movedCopied."
 	}
 }
 
-Write-Host "Finished."
+Write-Output "Finished."
