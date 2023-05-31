@@ -28,9 +28,10 @@
 	.\Copy-MTPFiles.ps1 -List
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param(
-	[switch]$Confirm,
+	# NB: not required - we inherit this from the Cmdlet common parameters.
+	# [switch]$Confirm,
 
 	[switch]$Move,
 
@@ -48,9 +49,9 @@ param(
 
 # Ensure we have a script-level Shell Application object for COM interactions.
 function New-ShellApplication {
-	if ($null -eq $script.$ShellApp) {
-		$script.$ShellApp = New-Object -ComObject Shell.Application
-		if ($null -eq $script.$ShellApp) {
+	if ($null -eq $script:ShellApp) {
+		$script:ShellApp = New-Object -ComObject Shell.Application
+		if ($null -eq $script:ShellApp) {
 			throw "Failed to create a COM Shell Application object."
 		}
 	}
@@ -58,7 +59,7 @@ function New-ShellApplication {
 
 # Retrieve all the MTP-compatible devices.
 function Get-MTPDevices {
-	$portableDevices = $script.$ShellApp.NameSpace(17).Items()
+	$portableDevices = $script:ShellApp.NameSpace(17).Items()
 	return $portableDevices | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 }
 
@@ -81,6 +82,27 @@ function Write-MTPDevices {
 			Write-Host "Found device. Name: $($device.Name), Type: $($device.Type)"
 		}
 	}
+}
+
+# Create a single regular expression to represent the filename patterns, for more efficient processing.
+function Convert-WildcardsToRegex {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Patterns
+    )
+    
+    # Convert each pattern to a regex, and join them with "|".
+    $regexes = $Patterns | ForEach-Object {
+        $pattern = [Regex]::Escape($_)
+        $pattern = $pattern.Replace('\*', '.*')
+        $pattern = $pattern.Replace('\?', '.')
+        "^$pattern$"
+    }
+
+	$regex = $regexes -join "|"
+	Write-Debug "Filename matching regex: $regex"
+
+    return New-Object System.Text.RegularExpressions.Regex $regex
 }
 
 # Ensure our transfers do not overwrite existing files in the destination directory. We append a unique numeric suffix like Windows' copy routine.
@@ -164,6 +186,8 @@ Write-Output "Copy-MTPFiles started."
 
 New-ShellApplication
 
+$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
+
 if ($List) {
 	Write-MTPDevices
 	return
@@ -228,7 +252,7 @@ else {
 	Write-Debug "Found destination directory ""$DestinationDirectory""."
 }
 
-$destinationFolder = $script.$ShellApp.NameSpace($DestinationDirectory)
+$destinationFolder = $script:ShellApp.NameSpace($DestinationDirectory)
 
 if ($Confirm)
 {
@@ -241,13 +265,8 @@ if ($Confirm)
 	$i = 0
 
 	# Scan the source folder for items which match the filename pattern(s).
-	foreach ($item in $sourceFolder.Items()) {
-		foreach ($p in $FilenamePatterns) {
-			if ($item.Name -like $p) {
-				$filesToTransfer += $item
-				break
-			}
-		}
+	foreach ($item in $sourceFolder.Items() | Where-Object $_.Name -match $regexPattern) {
+		$filesToTransfer += $item
 
 		# Progress bar.
 		$i++
@@ -265,21 +284,27 @@ if ($Confirm)
 			$i = 0
 
 			foreach ($item in $filesToTransfer) {
-				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
-	
-				if ($Move) {
-					$destinationFolder.MoveHere($item)
+				$i++
+
+				if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+					$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+		
+					if ($Move) {
+						$destinationFolder.MoveHere($item)
+					}
+					else {
+						$destinationFolder.CopyHere($item)
+					}
+
+					Write-Progress -Activity "Transferring files" -Status "$i out of $totalItems $movedCopied." -PercentComplete ($i / $totalItems * 100)
 				}
 				else {
-					$destinationFolder.CopyHere($item)
+					# For -WhatIf, just indicate that the file would have been transferred.
+					Write-Output "$item.Name $movedCopied to destination."
 				}
-
-				Write-Output "$item.Name $movedCopied to destination."
-
-				# Progress bar.
-				$i++
-				Write-Progress -Activity "Transferring files" -Status "$i out of $totalItems transferred" -PercentComplete ($i / $totalItems * 100)
 			}
+
+			Write-Output "$i file(s) $movedCopied."
 		}
 		else {
 			Write-Output "Transfer cancelled."
@@ -289,21 +314,22 @@ if ($Confirm)
 else {
 	# Transfer files immediately, without scanning or confirmation.
 	$i = 0
-	foreach ($item in $sourceFolder.Items()) {
-		foreach ($p in $FilenamePatterns) {
-			if ($item.Name -like $p) {
-				$i++
-				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
-				if ($Move) {
-					$destinationFolder.MoveHere($item)
-				}
-				else {
-					$destinationFolder.CopyHere($item)
-				}
-
-				Write-Progress -Activity "Transferring files" -Status "$item.Name $movedCopied to destination."
-				break
+	foreach ($item in $sourceFolder.Items() | Where-Object $_.Name -match $regexPattern) {
+		$i++
+		if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+			$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+			if ($Move) {
+				$destinationFolder.MoveHere($item)
 			}
+			else {
+				$destinationFolder.CopyHere($item)
+			}
+
+			Write-Progress -Activity "Transferring files" -Status "$item.Name $movedCopied to destination."
+			break
+		}
+		else {
+			Write-Output "$item.Name $movedCopied to destination."
 		}
 	}
 	if ($i -eq 0) {
