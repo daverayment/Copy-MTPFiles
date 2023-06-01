@@ -85,7 +85,7 @@ function Write-MTPDevices {
 	}
 }
 
-# Create a single regular expression to represent the filename patterns, for more efficient processing.
+# For more efficient processing, create a single regular expression to represent the filename patterns.
 function Convert-WildcardsToRegex {
     param(
         [Parameter(Mandatory=$true)]
@@ -93,17 +93,14 @@ function Convert-WildcardsToRegex {
     )
     
     # Convert each pattern to a regex, and join them with "|".
-    $regexes = $Patterns | ForEach-Object {
-        $pattern = [Regex]::Escape($_)
-        $pattern = $pattern.Replace('\*', '.*')
-        $pattern = $pattern.Replace('\?', '.')
-        "^$pattern$"
-    }
-
-	$regex = $regexes -join "|"
+	$regex = $($Patterns | ForEach-Object {
+        "^$([Regex]::Escape($_).Replace('\*', '.*').Replace('\?', '.'))$"
+    }) -join "|"
 	Write-Debug "Filename matching regex: $regex"
 
-    return New-Object System.Text.RegularExpressions.Regex $regex
+	# We could potentially be using the same regex thousands of times, so compile it. Also ensure matching is case-insensitive.
+	$options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
+    return New-Object System.Text.RegularExpressions.Regex ($regex, $options)
 }
 
 # Ensure our transfers do not overwrite existing files in the destination directory. We append a unique numeric suffix like Windows' copy routine.
