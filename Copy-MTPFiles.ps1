@@ -40,8 +40,9 @@ param(
 	[string]$DeviceName,
 
 	[ValidateNotNullOrEmpty()]
-	[string]$SourceDirectory,
+	[string]$SourceDirectory = (Get-Location).Path,
 
+	[ValidateNotNullOrEmpty()]
 	[string]$DestinationDirectory = (Get-Location).Path,
 
 	[string[]]$FilenamePatterns = "*"
@@ -194,10 +195,19 @@ if ($List) {
 }
 
 if (-not $PSBoundParameters.ContainsKey("SourceDirectory") -or [string]::IsNullOrEmpty($SourceDirectory)) {
-	throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the device folder from which to transfer files."
+	throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the folder from which to transfer files."
 }
 
-# Retrieve the portable devices connected to the computer via COM.
+if (-not $PSBoundParameters.ContainsKey("DestinationDirectory") -or [string]::IsNullOrEmpty($DestinationDirectory)) {
+	throw "No destination directory provided. Please use the 'DestinationDirectory' parameter to set the folder where the files will be transferred."
+}
+
+if (($SourceDirectory -eq $DestinationDirectory) -or
+	([IO.Path]::GetFullPath($SourceDirectory) -eq [IO.Path]::GetFullPath($DestinationDirectory))) {
+	throw "Source and Destination directories cannot be the same."
+}
+
+# Retrieve the portable devices connected to the computer.
 $devices = Get-MTPDevices
 
 if ($devices.Count -eq 0) {
