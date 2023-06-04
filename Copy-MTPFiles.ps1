@@ -321,8 +321,7 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 		return
 	}
 	else {
-		$confirmation = Read-Host "$($filesToTransfer.Count) files will be moved from ""$SourceDirectory"" to ""$DestinationDirectory"". Type 'Y' to proceed, any other input to cancel."
-		if ($confirmation -eq "Y") {
+		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$SourceDirectory"" to ""$DestinationDirectory""."
 			# For the moved items progress bar.
 			$totalItems = $filesToTransfer.Count
 			$i = 0
@@ -349,10 +348,6 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 			}
 
 			Write-Output "$i file(s) $movedCopied."
-		}
-		else {
-			Write-Output "Transfer cancelled."
-		}
 	}
 }
 else {
