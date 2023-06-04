@@ -163,8 +163,10 @@ function Get-UniqueFilename {
 
 # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
 function Get-FolderByPath {
+	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory = $true)]
+		[System.__ComObject]
 		$ParentFolder,
 
 		[Parameter(Mandatory = $true)]
@@ -172,19 +174,28 @@ function Get-FolderByPath {
 	)
 
 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
-	$created = $false
 	foreach ($directory in $FolderPath.Split('/')) {
-		$nextFolder = ($ParentFolder.Items() | Where-Object { $_.IsFolder -and $_.Name -eq $directory }).GetFolder
-		if ($null -eq $nextFolder) {
-			$ParentFolder.NewFolder($directory)
-			$nextFolder = ($ParentFolder.Items() | Where-Object { $_.IsFolder -and $_.Name -eq $directory }).GetFolder
-			$created = $true
+		$nextFolder = $ParentFolder.ParseName($directory)
+		if (-not $nextFolder.IsFolder) {
+			throw "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
 		}
-		$ParentFolder = $nextFolder
+		# Create a new directory if it doesn't already exist.
+		if ($null -eq $nextFolder) {
+			if ($PSCmdlet.ShouldProcess($directory, "Create directory")) {
+			$ParentFolder.NewFolder($directory)
+				$nextFolder = $ParentFolder.ParseName($directory)
+		}
+			else {
+				# In the -WhatIf scenario, we do not simulate the creation of missing directories, for now.
+				throw "Cannot continue without creating new directory ""$directory"". Exiting."
+			}
+		}
+		if ($null -eq $nextFolder) {
+			throw "Could not create new directory ""$directory"". Please confirm you have adequate permissions on the device."
 	}
 
-	if ($created) {
-		Write-Output "Created new directory ""$ParentFolder/$FolderPath""."
+		# Continue looping until all subfolders have been navigated.
+		$ParentFolder = $nextFolder.GetFolder
 	}
 
 	return $ParentFolder
