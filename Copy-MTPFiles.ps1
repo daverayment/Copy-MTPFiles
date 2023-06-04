@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-	This script transfers files from a portable device to the caller's machine via MTP - the Media Transfer Protocol.
+	This script transfers files to or from a portable device via MTP - the Media Transfer Protocol.
 .DESCRIPTION
 	The script accepts the following parameters:
 	- Confirm: A switch which controls whether to scan the source directory before transfers begin. Lists the number of matching files and allows cancelling before any transfers take place.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- List: A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
-	- DeviceName: The name of the attached device from which to transfer the files. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
-	- SourceDirectory: The path to the source directory on the portable device.
-	- DestinationDirectory: The path to the destination directory on the caller's machine. Defaults to the current directory.
+	- DeviceName: The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
+	- SourceDirectory: The path to the source directory.
+	- DestinationDirectory: The path to the destination directory.
 	- FilenamePatterns: An array of filename patterns to search for. Defaults to matching all files.
 .LINK
 	https://github.com/daverayment/Copy-MTPFiles
@@ -22,6 +22,10 @@
 	Copy files with a .jpg extension from the Download directory on the device to the current folder:
 
 	.\Copy-MTPFiles.ps1 "Internal storage/Download" -FilenamePatterns "*.jpg"
+.EXAMPLE
+	Move all files from the current directory on the host computer to the Download directory on the portable device:
+
+	.\Copy-MTPFiles.ps1 -Move -SourceDirectory "." -DestinationDirectory "Internal storage/Download"
 .EXAMPLE
 	List all compatible devices which are currently attached:
 
@@ -72,15 +76,15 @@ function Write-MTPDevices {
 		Write-Host "No MTP-compatible devices found."
 	}
 	elseif ($devices.Count -eq 1) {
-		Write-Host "One MTP device found..."
+		Write-Host "One MTP device found."
 		# Note: no need to use indexing when only a single value is present.
 		# Note: use subexpressions for COM props so actual value is displayed.
-		Write-Host "Device name: $($devices.Name), Type: $($devices.Type)"
+		Write-Host "  Device name: $($devices.Name), Type: $($devices.Type)"
 	}
 	else {
-		Write-Host "Listing attached MTP devices..."
+		Write-Host "Listing attached MTP devices."
 		foreach ($device in $devices) {
-			Write-Host "Found device. Name: $($device.Name), Type: $($device.Type)"
+			Write-Host "  Device name: $($device.Name), Type: $($device.Type)"
 		}
 	}
 }
@@ -161,11 +165,9 @@ function Get-UniqueFilename {
 function Get-FolderByPath {
 	param(
 		[Parameter(Mandatory = $true)]
-		[Alias("Folder")]
 		$ParentFolder,
 
 		[Parameter(Mandatory = $true)]
-		[Alias("Path")]
 		$FolderPath
 	)
 
@@ -179,6 +181,21 @@ function Get-FolderByPath {
 
 	return $ParentFolder
 }
+
+# Get a COM reference to the directory on the host device.
+function Get-HostDirectory {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$DirectoryPath
+	)
+
+	if (-not (Test-Path -Path $DirectoryPath)) {
+		throw "Host directory ""$DirectoryPath"" not found. Please check you have supplied a valid directory path."
+	}
+
+	return $script:ShellApp.NameSpace($DirectoryPath)
+}
+
 
 Write-Output "Copy-MTPFiles started."
 
@@ -234,11 +251,11 @@ if ($Move) {
 Write-Verbose "Using $($device.Name) ($($device.Type))."
 
 # Retrieve the root folder of the attached device.
-$deviceRoot = $shell.Namespace($device.Path)
+$deviceRoot = $script:ShellApp.Namespace($device.Path)
 Write-Debug "Found device root folder."
 
 # Retrieve the source folder on the device.
-$sourceFolder = Get-FolderByPath -ParentFolder $deviceRoot -Path $SourceDirectory
+$sourceFolder = Get-FolderByPath -ParentFolder $deviceRoot -FolderPath $SourceDirectory
 if ($null -eq $sourceFolder) {
 	throw "Source folder ""$SourceDirectory"" not found. Please check you have selected the Transfer Files mode on the device and the folder is present."
 }
@@ -261,8 +278,7 @@ else {
 
 $destinationFolder = $script:ShellApp.NameSpace($DestinationDirectory)
 
-if ($Confirm)
-{
+if ($PSBoundParameters.ContainsKey("Confirm")) {
 	# Holds all the files in the source directory which match the file pattern(s).
 	$filesToTransfer = @()
 
@@ -274,7 +290,7 @@ if ($Confirm)
 	# Scan the source folder for items which match the filename pattern(s).
 	foreach ($item in $sourceFolder.Items()) {
 		if ($item.Name -match $regexPattern) {
-		$filesToTransfer += $item
+			$filesToTransfer += $item
 		}
 
 		# Progress bar.
@@ -286,7 +302,7 @@ if ($Confirm)
 		return
 	}
 	else {
-		$confirmation = Read-Host "$($filesToTransfer.Count) files will be moved from ""$SourceDirectory"" to ""$DestinationDirectory"". Proceed (Y/N)?"
+		$confirmation = Read-Host "$($filesToTransfer.Count) files will be moved from ""$SourceDirectory"" to ""$DestinationDirectory"". Type 'Y' to proceed, any other input to cancel."
 		if ($confirmation -eq "Y") {
 			# For the moved items progress bar.
 			$totalItems = $filesToTransfer.Count
@@ -326,20 +342,21 @@ else {
 	foreach ($item in $sourceFolder.Items()) {
 		$i++
 		if ($item.Name -match $regexPattern) {
-		if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-			$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
-			if ($Move) {
-				$destinationFolder.MoveHere($item)
+			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+				if ($Move) {
+					$destinationFolder.MoveHere($item)
+				}
+				else {
+					$destinationFolder.CopyHere($item)
+				}
+
+				Write-Progress -Activity "Transferring files" -Status "$item.Name $movedCopied to destination."
+				break
 			}
 			else {
-				$destinationFolder.CopyHere($item)
+				Write-Output """$($item.Name)"" $movedCopied to destination."
 			}
-
-			Write-Progress -Activity "Transferring files" -Status "$item.Name $movedCopied to destination."
-			break
-		}
-		else {
-			Write-Output "$item.Name $movedCopied to destination."
 		}
 	}
 	if ($i -eq 0) {
