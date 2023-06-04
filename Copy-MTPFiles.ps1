@@ -171,12 +171,20 @@ function Get-FolderByPath {
 		$FolderPath
 	)
 
-	# Loop through each path subfolder in turn.
+	# Loop through each path subfolder in turn, creating folders if they don't already exist.
+	$created = $false
 	foreach ($directory in $FolderPath.Split('/')) {
-		$ParentFolder = ($ParentFolder.Items() | Where-Object { $_.IsFolder -and $_.Name -eq $directory }).GetFolder
-		if ($null -eq $ParentFolder) {
-			break
+		$nextFolder = ($ParentFolder.Items() | Where-Object { $_.IsFolder -and $_.Name -eq $directory }).GetFolder
+		if ($null -eq $nextFolder) {
+			$ParentFolder.NewFolder($directory)
+			$nextFolder = ($ParentFolder.Items() | Where-Object { $_.IsFolder -and $_.Name -eq $directory }).GetFolder
+			$created = $true
 		}
+		$ParentFolder = $nextFolder
+	}
+
+	if ($created) {
+		Write-Output "Created new directory ""$ParentFolder/$FolderPath""."
 	}
 
 	return $ParentFolder
