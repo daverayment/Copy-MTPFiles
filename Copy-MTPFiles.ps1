@@ -359,8 +359,8 @@ else {
 	# Transfer files immediately, without scanning or confirmation.
 	$i = 0
 	foreach ($item in $sourceFolder.Items()) {
-		$i++
 		if ($item.Name -match $regexPattern) {
+			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
 				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
 				if ($Move) {
