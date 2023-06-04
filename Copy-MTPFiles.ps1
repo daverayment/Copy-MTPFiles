@@ -123,7 +123,7 @@ function Get-UniqueFilename {
 	if (-not (Test-Path -Path $tempDirectory)) {
 		New-Item -Path $tempDirectory -ItemType Directory | Out-Null
 	}
-	$tempFolder = $shell.NameSpace($tempDirectory)
+	$tempFolder = $script:ShellApp.NameSpace($tempDirectory)
 
 	$destinationPath = Join-Path -Path $DestinationDirectory -ChildPath $FileItem.Name
 
@@ -161,6 +161,25 @@ function Get-UniqueFilename {
 	return $FileItem
 }
 
+function Get-MTPFolderByName {
+	param (
+		[System.__ComObject]
+		$ParentFolder,
+
+		[string]
+		$FolderName
+	)
+
+	foreach ($item in $ParentFolder.Items()) {
+		Write-Verbose "Checking $($item.Name)..."
+		if ($item.IsFolder -and $item.Name -eq $FolderName) {
+			return $item.GetFolder
+		}
+	}
+
+	return $null
+}
+
 # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
 function Get-FolderByPath {
 	[CmdletBinding(SupportsShouldProcess)]
@@ -182,9 +201,9 @@ function Get-FolderByPath {
 		# Create a new directory if it doesn't already exist.
 		if ($null -eq $nextFolder) {
 			if ($PSCmdlet.ShouldProcess($directory, "Create directory")) {
-			$ParentFolder.NewFolder($directory)
+				$ParentFolder.NewFolder($directory)
 				$nextFolder = $ParentFolder.ParseName($directory)
-		}
+			}
 			else {
 				# In the -WhatIf scenario, we do not simulate the creation of missing directories, for now.
 				throw "Cannot continue without creating new directory ""$directory"". Exiting."
@@ -192,7 +211,7 @@ function Get-FolderByPath {
 		}
 		if ($null -eq $nextFolder) {
 			throw "Could not create new directory ""$directory"". Please confirm you have adequate permissions on the device."
-	}
+		}
 
 		# Continue looping until all subfolders have been navigated.
 		$ParentFolder = $nextFolder.GetFolder
@@ -201,18 +220,62 @@ function Get-FolderByPath {
 	return $ParentFolder
 }
 
-# Get a COM reference to the directory on the host device.
-function Get-HostDirectory {
+# Get a COM reference to a directory.
+function Get-COMFolder {
 	param(
 		[Parameter(Mandatory = $true)]
 		[string]$DirectoryPath
 	)
 
-	if (-not (Test-Path -Path $DirectoryPath)) {
-		throw "Host directory ""$DirectoryPath"" not found. Please check you have supplied a valid directory path."
+	if (Get-IsHostDirectory($DirectoryPath)) {
+		# Non-MTP path, i.e. on the host device.
+		if (-not (Test-Path -Path $DirectoryPath)) {
+			return $null
+		}
+		return $script:ShellApp.NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
+	else {
+		# Retrieve the portable devices connected to the computer.
+		$devices = Get-MTPDevices
 
-	return $script:ShellApp.NameSpace($DirectoryPath)
+		if ($devices.Count -eq 0) {
+			throw "No compatible devices found. Please connect a device in Transfer Files mode."
+		}
+		elseif ($devices.Count -gt 1) {
+			if ($DeviceName) {
+				$device = $devices | Where-Object { $_.Name -ieq $DeviceName }
+		
+				if (-not $device) {
+					throw "Device ""$DeviceName"" not found."
+				}
+			}
+			else {
+				throw "Multiple MTP-compatible devices found. Please use the 'DeviceName' parameter to specify the device to use. Use the 'List' switch to list all compatible device names."
+			}
+		}
+		else {
+			$device = $devices
+		}
+
+		Write-Verbose "Using $($device.Name) ($($device.Type))."
+		
+		# Retrieve the root folder of the attached device.
+		$deviceRoot = $script:ShellApp.Namespace($device.Path)
+
+		# Return a reference to the requested path on the device.
+		return Get-FolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
+	}
+}
+
+# Returns whether the provided path is formatted like one from the host
+# computer. Note: this does not check whether the directory exists.
+function Get-IsHostDirectory {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$DirectoryPath
+	)
+
+	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
 }
 
 
@@ -220,18 +283,18 @@ Write-Output "Copy-MTPFiles started."
 
 New-ShellApplication
 
-$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
-
 if ($List) {
 	Write-MTPDevices
 	return
 }
 
-if (-not $PSBoundParameters.ContainsKey("SourceDirectory") -or [string]::IsNullOrEmpty($SourceDirectory)) {
+Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
+
+if ([string]::IsNullOrEmpty($SourceDirectory)) {
 	throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the folder from which to transfer files."
 }
 
-if (-not $PSBoundParameters.ContainsKey("DestinationDirectory") -or [string]::IsNullOrEmpty($DestinationDirectory)) {
+if ([string]::IsNullOrEmpty($DestinationDirectory)) {
 	throw "No destination directory provided. Please use the 'DestinationDirectory' parameter to set the folder where the files will be transferred."
 }
 
@@ -240,62 +303,27 @@ if (($SourceDirectory -eq $DestinationDirectory) -or
 	throw "Source and Destination directories cannot be the same."
 }
 
-# Retrieve the portable devices connected to the computer.
-$devices = Get-MTPDevices
-
-if ($devices.Count -eq 0) {
-	throw "No compatible devices found. Please connect a device in Transfer Files mode."
-}
-elseif ($devices.Count -gt 1) {
-	if ($DeviceName) {
-		$device = $devices | Where-Object { $_.Name -ieq $DeviceName }
-
-		if (-not $device) {
-			throw "Device ""$DeviceName"" not found."
-		}
-	}
-	else {
-		throw "Multiple MTP-compatible devices found. Please use the 'DeviceName' parameter to specify the device to use. Use the 'List' switch to list all compatible device names."
-	}
-}
-else {
-	$device = $devices
-}
+$sourceFolder = Get-COMFolder $SourceDirectory
+$destinationFolder = Get-COMFolder $DestinationDirectory
 
 $movedCopied = "copied"
 if ($Move) {
 	$movedCopied = "moved"
 }
 
-Write-Verbose "Using $($device.Name) ($($device.Type))."
-
-# Retrieve the root folder of the attached device.
-$deviceRoot = $script:ShellApp.Namespace($device.Path)
-Write-Debug "Found device root folder."
-
-# Retrieve the source folder on the device.
-$sourceFolder = Get-FolderByPath -ParentFolder $deviceRoot -FolderPath $SourceDirectory
 if ($null -eq $sourceFolder) {
-	throw "Source folder ""$SourceDirectory"" not found. Please check you have selected the Transfer Files mode on the device and the folder is present."
+	throw "Source folder ""$SourceDirectory"" either not found or could not be created."
 }
 
 Write-Debug "Found source folder ""$SourceDirectory""."
 
-# Retrieve the destination folder, creating it if it doesn't already exist.
-if (-not (Test-Path -Path $DestinationDirectory)) {
-	try {
-		New-Item -Path $DestinationDirectory -ItemType Directory
-	}
-	catch {
-		throw "Destination directory ""$DestinationDirectory"" was not found and could not be created. Please check you have the necessary permissions."
-	}
-	Write-Output "Created new directory ""$DestinationDirectory""."
-}
-else {
-	Write-Debug "Found destination directory ""$DestinationDirectory""."
+if ($null -eq $destinationFolder) {
+	throw "Destination folder ""$DestinationDirectory"" either not found or could not be created."
 }
 
-$destinationFolder = $script:ShellApp.NameSpace($DestinationDirectory)
+Write-Debug "Found destination folder ""$DestinationDirectory""."
+
+$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 if ($PSBoundParameters.ContainsKey("Confirm")) {
 	# Holds all the files in the source directory which match the file pattern(s).
@@ -322,32 +350,32 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 	}
 	else {
 		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$SourceDirectory"" to ""$DestinationDirectory""."
-			# For the moved items progress bar.
-			$totalItems = $filesToTransfer.Count
-			$i = 0
+		# For the moved items progress bar.
+		$totalItems = $filesToTransfer.Count
+		$i = 0
 
-			foreach ($item in $filesToTransfer) {
-				$i++
+		foreach ($item in $filesToTransfer) {
+			$i++
 
-				if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-					$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
-		
-					if ($Move) {
-						$destinationFolder.MoveHere($item)
-					}
-					else {
-						$destinationFolder.CopyHere($item)
-					}
-
-					Write-Progress -Activity "Transferring files" -Status "$i out of $totalItems $movedCopied." -PercentComplete ($i / $totalItems * 100)
+			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+	
+				if ($Move) {
+					$destinationFolder.MoveHere($item)
 				}
 				else {
-					# For -WhatIf, just indicate that the file would have been transferred.
-					Write-Output "$($item.Name) $movedCopied to destination."
+					$destinationFolder.CopyHere($item)
 				}
-			}
 
-			Write-Output "$i file(s) $movedCopied."
+				Write-Progress -Activity "Transferring files" -Status "$i out of $totalItems $movedCopied." -PercentComplete ($i / $totalItems * 100)
+			}
+			else {
+				# For -WhatIf, just indicate that the file would have been transferred.
+				Write-Output "$($item.Name) $movedCopied to destination."
+			}
+		}
+
+		Write-Output "$i file(s) $movedCopied."
 	}
 }
 else {
