@@ -272,8 +272,10 @@ if ($Confirm)
 	$i = 0
 
 	# Scan the source folder for items which match the filename pattern(s).
-	foreach ($item in $sourceFolder.Items() | Where-Object $_.Name -match $regexPattern) {
+	foreach ($item in $sourceFolder.Items()) {
+		if ($item.Name -match $regexPattern) {
 		$filesToTransfer += $item
+		}
 
 		# Progress bar.
 		$i++
@@ -307,7 +309,7 @@ if ($Confirm)
 				}
 				else {
 					# For -WhatIf, just indicate that the file would have been transferred.
-					Write-Output "$item.Name $movedCopied to destination."
+					Write-Output "$($item.Name) $movedCopied to destination."
 				}
 			}
 
@@ -321,8 +323,9 @@ if ($Confirm)
 else {
 	# Transfer files immediately, without scanning or confirmation.
 	$i = 0
-	foreach ($item in $sourceFolder.Items() | Where-Object $_.Name -match $regexPattern) {
+	foreach ($item in $sourceFolder.Items()) {
 		$i++
+		if ($item.Name -match $regexPattern) {
 		if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
 			$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
 			if ($Move) {
