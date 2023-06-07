@@ -222,15 +222,27 @@ function Get-FolderByPath {
 
 # Get a COM reference to a directory.
 function Get-COMFolder {
+	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath
 	)
 
-	if (Get-IsHostDirectory($DirectoryPath)) {
-		# Non-MTP path, i.e. on the host device.
+	if (Test-IsHostDirectory($DirectoryPath)) {
+		# Is a non-MTP path, i.e. on the host device.
+		# Create the path if it doesn't already exist and return a COM reference to it.
 		if (-not (Test-Path -Path $DirectoryPath)) {
-			return $null
+			try {
+				New-Item -Type Directory -Path $DirectoryPath
+			}
+			catch {
+				throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
+			}
+			if (-not (Test-Path -Path $DirectoryPath)) {
+				# We get here if the Confirm prompt was declined.
+				throw "Cannot continue without creating full ""$DirectoryPath"" path."
+			}
 		}
 		return $script:ShellApp.NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
