@@ -93,9 +93,10 @@ function Write-MTPDevices {
 function Convert-WildcardsToRegex {
     param(
         [Parameter(Mandatory=$true)]
+		[ValidateNotNullOrEmpty()]
         [string[]]$Patterns
     )
-    
+
     # Convert each pattern to a regex, and join them with "|".
 	$regex = $($Patterns | ForEach-Object {
         "^$([Regex]::Escape($_).Replace('\*', '.*').Replace('\?', '.'))$"
@@ -107,41 +108,69 @@ function Convert-WildcardsToRegex {
     return New-Object System.Text.RegularExpressions.Regex ($regex, $options)
 }
 
-# Ensure our transfers do not overwrite existing files in the destination directory. We append a unique numeric suffix like Windows' copy routine.
+# Generate a new filename with a unique number suffix.
+# Note: this function does not currently have an upper bound for the numeric suffix.
 function Get-UniqueFilename {
 	param(
 		[Parameter(Mandatory = $true)]
-		[Alias("Item")]
-		$FileItem,
+		[ValidateNotNullOrEmpty()]
+		[System.__ComObject]$Folder,
 
 		[Parameter(Mandatory = $true)]
-		[System.__ComObject]
-		$DestinationFolder
+		[ValidateNotNullOrEmpty()]
+		[string]$Filename
 	)
 
-	$tempDirectory = Join-Path -Path $Env:TEMP -ChildPath "TempCopyMTPFiles"
-	if (-not (Test-Path -Path $tempDirectory)) {
-		New-Item -Path $tempDirectory -ItemType Directory | Out-Null
+	$baseName = [IO.Path]::GetFileNameWithoutExtension($Filename)
+	$extension = [IO.Path]::GetExtension($Filename)
+	$counter = 1
+
+	do {
+		$newName = "$baseName ($counter)$extension"
+		$counter++
 	}
-	$tempFolder = $script:ShellApp.NameSpace($tempDirectory)
+	while ($Folder.ParseName($newName))
 
-	$destinationPath = Join-Path -Path $DestinationDirectory -ChildPath $FileItem.Name
+	return $newName
+}
 
-    # Check if a file with the same name already exists in the destination directory
-    if (Test-Path -Path $destinationPath) {
-        $baseName = [IO.Path]::GetFileNameWithoutExtension($FileItem.Name)
-        $extension = [IO.Path]::GetExtension($FileItem.Name)
-        $counter = 1
+function Get-TempFolderPath {
+	return Join-Path -Path $Env:TEMP -ChildPath "TempCopyMTPFiles"
+}
 
-        # Generate a new filename with a unique number suffix.
-        do {
-            $newName = "$baseName ($counter)$extension"
-            $destinationPath = Join-Path -Path $DestinationDirectory -ChildPath $newName
-            $counter++
-        }
-        while (Test-Path -Path $destinationPath)
+function Clear-TempFolder {
+	$tempPath = Get-TempFolderPath
 
-        Write-Warning "A file with the same name already exists. Renaming to $newName."
+	if (-not (Test-Path -Path $tempPath)) {
+		New-Item -Path $tempPath -ItemType Directory | Out-Null
+	}
+	else {
+		$tempPath | Get-ChildItem | Remove-Item
+	}
+}
+
+# Ensure our transfers do not overwrite existing files in the destination
+# directory. We append a unique numeric suffix like Windows' copy routine. The
+# function returns the newly-renamed file in a temporary directory, ready for
+# transfer.
+function Rename-DuplicateFile {
+	param(
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[Alias("Item")]
+		[System.__ComObject]$FileItem,
+
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[System.__ComObject]$DestinationFolder
+	)
+
+	if ($DestinationFolder.ParseName($FileItem.Name)) {
+		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $FileItem.Name
+		Write-Warning "A file with the same name already exists. Renaming to $newName."
+
+		$tempDirectory = Get-TempFolderPath
+		$tempFolder = $script:ShellApp.NameSpace($tempDirectory)
 
 		# Copy or move the file to our temporary directory so it can be renamed without altering the source directory.
 		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $FileItem.Name
@@ -155,19 +184,21 @@ function Get-UniqueFilename {
 
 		# Perform the rename and update the path of the item.
 		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
-		$FileItem = $tempFolder.Items() | Where-Object { $_.Path -eq $tempFilePathNew }
-    }
+		$FileItem = $tempFolder.ParseName($newName)
+	}
 
 	return $FileItem
 }
 
 function Get-MTPFolderByName {
 	param (
-		[System.__ComObject]
-		$ParentFolder,
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[System.__ComObject]$ParentFolder,
 
-		[string]
-		$FolderName
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$FolderName
 	)
 
 	foreach ($item in $ParentFolder.Items()) {
@@ -181,15 +212,16 @@ function Get-MTPFolderByName {
 }
 
 # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
-function Get-FolderByPath {
+function Get-MTPFolderByPath {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory = $true)]
-		[System.__ComObject]
-		$ParentFolder,
+		[ValidateNotNullOrEmpty()]
+		[System.__ComObject]$ParentFolder,
 
 		[Parameter(Mandatory = $true)]
-		$FolderPath
+		[ValidateNotNullOrEmpty()]
+		[string]$FolderPath
 	)
 
 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
@@ -220,7 +252,7 @@ function Get-FolderByPath {
 	return $ParentFolder
 }
 
-# Get a COM reference to a directory.
+# Get a COM reference to a directory, creating it if it doesn't already exist.
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
@@ -275,25 +307,42 @@ function Get-COMFolder {
 		$deviceRoot = $script:ShellApp.Namespace($device.Path)
 
 		# Return a reference to the requested path on the device.
-		return Get-FolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
+		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
 	}
 }
 
 # Returns whether the provided path is formatted like one from the host
 # computer. Note: this does not check whether the directory exists.
-function Get-IsHostDirectory {
+function Test-IsHostDirectory {
 	param(
 		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath
 	)
 
 	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
 }
 
+function Complete-Transfers {
+	param(
+		[int]$FileCount = 0
+	)
+
+	Write-Output "$FileCount file(s) $movedCopied."
+
+	# NB: at this point, we do not know if transfers are still in flight, so we prompt for the user to confirm.
+	Write-Warning "Transfers may still be in progress"
+	Read-Host "All transfer requests have been made. Please confirm all transfers have completed then press [Enter]."
+	Start-Sleep -Seconds 1
+	Clear-TempFolder
+}
+
 
 Write-Output "Copy-MTPFiles started."
 
 New-ShellApplication
+
+Clear-TempFolder
 
 if ($List) {
 	Write-MTPDevices
@@ -370,7 +419,7 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 			$i++
 
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+				$item = Rename-DuplicateFile -Item $item -DestinationFolder $destinationFolder
 	
 				if ($Move) {
 					$destinationFolder.MoveHere($item)
@@ -387,7 +436,7 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 			}
 		}
 
-		Write-Output "$i file(s) $movedCopied."
+		Complete-Transfers -FileCount $i 
 	}
 }
 else {
@@ -397,7 +446,7 @@ else {
 		if ($item.Name -match $regexPattern) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				$item = Get-UniqueFilename -Item $item -DestinationFolder $destinationFolder
+				$item = Rename-DuplicateFile -Item $item -DestinationFolder $destinationFolder
 				if ($Move) {
 					$destinationFolder.MoveHere($item)
 				}
@@ -405,8 +454,7 @@ else {
 					$destinationFolder.CopyHere($item)
 				}
 
-				Write-Progress -Activity "Transferring files" -Status "$item.Name $movedCopied to destination."
-				break
+				Write-Progress -Activity "Transferring files" -Status "$($item.Name) $movedCopied to destination."
 			}
 			else {
 				Write-Output """$($item.Name)"" $movedCopied to destination."
@@ -417,7 +465,7 @@ else {
 		Write-Output "No matching files found."
 	}
 	else {
-		Write-Output "$i file(s) $movedCopied."
+		Complete-Transfers -FileCount $i
 	}
 }
 
