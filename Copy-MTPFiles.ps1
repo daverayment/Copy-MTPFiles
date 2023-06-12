@@ -3,7 +3,7 @@
 	This script transfers files to or from a portable device via MTP - the Media Transfer Protocol.
 .DESCRIPTION
 	The script accepts the following parameters:
-	- Confirm: A switch which controls whether to scan the source directory before transfers begin. Lists the number of matching files and allows cancelling before any transfers take place.
+	- PreScan: A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- List: A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
 	- DeviceName: The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
@@ -34,8 +34,7 @@
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
-	# NB: not required - we inherit this from the Cmdlet common parameters.
-	# [switch]$Confirm,
+	[switch]$PreScan,
 
 	[switch]$Move,
 
@@ -149,11 +148,10 @@ function Clear-TempFolder {
 	}
 }
 
-# Ensure our transfers do not overwrite existing files in the destination
-# directory. We append a unique numeric suffix like Windows' copy routine. The
-# function returns the newly-renamed file in a temporary directory, ready for
-# transfer.
-function Rename-DuplicateFile {
+# Copy the file to be transferred into our temporary folder, renaming it if 
+# necessary to ensure there is no name conflict with a file in the destination.
+# If a duplicate is detected, we append a unique numeric suffix.
+function Copy-FileToTemp {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
@@ -165,29 +163,34 @@ function Rename-DuplicateFile {
 		[System.__ComObject]$DestinationFolder
 	)
 
-	if ($DestinationFolder.ParseName($FileItem.Name)) {
-		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $FileItem.Name
+	$tempDirectory = Get-TempFolderPath
+	$tempFolder = $script:ShellApp.Namespace($tempDirectory)
+
+	$filename = $FileItem.Name
+
+	Write-Debug "Transferring $filename to temporary folder..."
+	if ($Move) {
+		$tempFolder.MoveHere($FileItem)
+	}
+	else {
+		$tempFolder.CopyHere($FileItem)
+	}
+	Write-Debug "Done"
+
+	# Does the file need to be renamed?
+	if ($DestinationFolder.ParseName($filename))
+	{
+		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $filename
 		Write-Warning "A file with the same name already exists. Renaming to $newName."
 
-		$tempDirectory = Get-TempFolderPath
-		$tempFolder = $script:ShellApp.NameSpace($tempDirectory)
-
-		# Copy or move the file to our temporary directory so it can be renamed without altering the source directory.
-		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $FileItem.Name
+		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $filename
 		$tempFilePathNew = Join-Path -Path $tempDirectory -ChildPath $newName
-		if ($Move) {
-			$tempFolder.MoveHere($FileItem)
-		}
-		else {
-			$tempFolder.CopyHere($FileItem)
-		}
-
-		# Perform the rename and update the path of the item.
 		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
-		$FileItem = $tempFolder.ParseName($newName)
+		$filename = $newName
 	}
 
-	return $FileItem
+	# Return the newly-transferred temp file.
+	return $tempFolder.ParseName($filename)
 }
 
 function Get-MTPFolderByName {
@@ -323,12 +326,83 @@ function Test-IsHostDirectory {
 	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
 }
 
+# Transfer a file from the source to the destination, using our temporary
+# folder as a working area.
+function Send-SingleFile {
+	param(
+		[Parameter(Mandatory = $true)]
+		[System.__ComObject]$FileItem,
+
+		[Parameter(Mandatory = $true)]
+		[System.__ComObject]$DestinationFolder,
+
+		[int]$FileNumber,
+
+		[int]$TotalFiles = 0
+	)
+
+	$filename = $FileItem.Name
+
+	if ($script:SourceOnHost -and $script:DestinationOnHost) {
+		# Use Powershell built-in commands if possible.
+		try {
+			$destinationUnique = Join-Path -Path $DestinationDirectory -ChildPath (Get-UniqueFilename -Folder $DestinationFolder -Filename $filename)
+			if ($Move) {
+				Move-Item -Path $item.Path -Destination $destinationUnique -Confirm:$false
+			}
+			else {
+				Copy-Item -Path $item.Path -Destination $destinationUnique -Confirm:$false
+			}
+		}
+		catch {
+			throw "Error: unable to transfer the file ""$filename""."
+		}
+	}
+	else {
+		try {
+			$tempItem = New-TemporaryFile -Item $FileItem -DestinationFolder $DestinationFolder
+
+			if ($Move) {
+				$DestinationFolder.MoveHere($tempItem)
+			}
+			else {
+				$DestinationFolder.CopyHere($tempItem)
+			}
+		}
+		catch {
+			throw "Error: unable to transfer the file ""$filename""."
+		}
+		finally {
+			# Remove the file from the temporary folder.
+			Remove-Item -Path $tempItem.Path -ErrorAction Ignore
+		}
+
+		if ($Move) {
+			try {
+				Remove-Item -Path $FileItem.Path -ErrorAction Stop
+			}
+			catch {
+				throw "Error: unable to delete the source file."
+			}
+		}
+	}
+
+	if ($TotalFiles -gt 0) {
+		Write-Progress -Activity "Transferring files" -Status """$filename"" transferred. $FileNumber out of $TotalFiles $script:MovedCopied." -PercentComplete ($FileNumber / $TotalFiles * 100)
+	}
+	else {
+		Write-Progress -Activity "Transferring files" -Status """$filename"" $script:MovedCopied to destination."
+	}
+}
+
 function Complete-Transfers {
 	param(
 		[int]$FileCount = 0
 	)
 
-	Write-Output "$FileCount file(s) $movedCopied."
+	# TODO: COMPLETE!
+
+	Write-Output "$FileCount file(s) $script:MovedCopied."
 
 	# NB: at this point, we do not know if transfers are still in flight, so we prompt for the user to confirm.
 	Write-Warning "Transfers may still be in progress"
@@ -364,12 +438,15 @@ if (($SourceDirectory -eq $DestinationDirectory) -or
 	throw "Source and Destination directories cannot be the same."
 }
 
+$script:SourceOnHost = Test-IsHostDirectory -DirectoryPath $SourceDirectory
+$script:DestinationOnHost = Test-IsHostDirectory -DirectoryPath $DestinationDirectory
+
 $sourceFolder = Get-COMFolder $SourceDirectory
 $destinationFolder = Get-COMFolder $DestinationDirectory
 
-$movedCopied = "copied"
+$script:MovedCopied = "copied"
 if ($Move) {
-	$movedCopied = "moved"
+	$script:MovedCopied = "moved"
 }
 
 if ($null -eq $sourceFolder) {
@@ -386,7 +463,7 @@ Write-Debug "Found destination folder ""$DestinationDirectory""."
 
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
-if ($PSBoundParameters.ContainsKey("Confirm")) {
+if ($PSBoundParameters.ContainsKey("PreScan")) {
 	# Holds all the files in the source directory which match the file pattern(s).
 	$filesToTransfer = @()
 
@@ -411,28 +488,12 @@ if ($PSBoundParameters.ContainsKey("Confirm")) {
 	}
 	else {
 		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$SourceDirectory"" to ""$DestinationDirectory""."
-		# For the moved items progress bar.
 		$totalItems = $filesToTransfer.Count
 		$i = 0
-
 		foreach ($item in $filesToTransfer) {
 			$i++
-
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				$item = Rename-DuplicateFile -Item $item -DestinationFolder $destinationFolder
-	
-				if ($Move) {
-					$destinationFolder.MoveHere($item)
-				}
-				else {
-					$destinationFolder.CopyHere($item)
-				}
-
-				Write-Progress -Activity "Transferring files" -Status "$i out of $totalItems $movedCopied." -PercentComplete ($i / $totalItems * 100)
-			}
-			else {
-				# For -WhatIf, just indicate that the file would have been transferred.
-				Write-Output "$($item.Name) $movedCopied to destination."
+				Send-SingleFile -FileItem $item -DestinationFolder $destinationFolder -FileNumber $i -TotalFiles $totalItems
 			}
 		}
 
@@ -446,18 +507,7 @@ else {
 		if ($item.Name -match $regexPattern) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				$item = Rename-DuplicateFile -Item $item -DestinationFolder $destinationFolder
-				if ($Move) {
-					$destinationFolder.MoveHere($item)
-				}
-				else {
-					$destinationFolder.CopyHere($item)
-				}
-
-				Write-Progress -Activity "Transferring files" -Status "$($item.Name) $movedCopied to destination."
-			}
-			else {
-				Write-Output """$($item.Name)"" $movedCopied to destination."
+				Send-SingleFile -FileItem $item -DestinationFolder $destinationFolder
 			}
 		}
 	}
