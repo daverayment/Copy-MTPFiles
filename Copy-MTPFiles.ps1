@@ -54,9 +54,15 @@ param(
 # Ensure we have a script-level Shell Application object for COM interactions.
 function New-ShellApplication {
 	if ($null -eq $script:ShellApp) {
-		$script:ShellApp = New-Object -ComObject Shell.Application
-		if ($null -eq $script:ShellApp) {
-			throw "Failed to create a COM Shell Application object."
+		try {
+			$script:ShellApp = New-Object -ComObject Shell.Application
+			if ($null -eq $script:ShellApp) {
+				throw "Failed to create a COM Shell Application object."
+			}	
+		}
+		catch {
+			Write-Error -Message $_
+			exit 1
 		}
 	}
 }
