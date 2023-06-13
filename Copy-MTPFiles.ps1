@@ -52,7 +52,7 @@ param(
 )
 
 # Ensure we have a script-level Shell Application object for COM interactions.
-function New-ShellApplication {
+function Get-ShellApplication {
 	if ($null -eq $script:ShellApp) {
 		try {
 			$script:ShellApp = New-Object -ComObject Shell.Application
@@ -65,12 +65,13 @@ function New-ShellApplication {
 			exit 1
 		}
 	}
+
+	$script:ShellApp
 }
 
 # Retrieve all the MTP-compatible devices.
 function Get-MTPDevices {
-	$portableDevices = $script:ShellApp.NameSpace(17).Items()
-	return $portableDevices | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
+	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 }
 
 # Lists all the attached MTP-compatible devices.
@@ -82,8 +83,6 @@ function Write-MTPDevices {
 	}
 	elseif ($devices.Count -eq 1) {
 		Write-Host "One MTP device found."
-		# Note: no need to use indexing when only a single value is present.
-		# Note: use subexpressions for COM props so actual value is displayed.
 		Write-Host "  Device name: $($devices.Name), Type: $($devices.Type)"
 	}
 	else {
@@ -170,7 +169,7 @@ function Copy-FileToTemp {
 	)
 
 	$tempDirectory = Get-TempFolderPath
-	$tempFolder = $script:ShellApp.Namespace($tempDirectory)
+	$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
 
 	$filename = $FileItem.Name
 
@@ -285,7 +284,7 @@ function Get-COMFolder {
 				throw "Cannot continue without creating full ""$DirectoryPath"" path."
 			}
 		}
-		return $script:ShellApp.NameSpace([IO.Path]::GetFullPath($DirectoryPath))
+		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
 	else {
 		# Retrieve the portable devices connected to the computer.
@@ -313,7 +312,7 @@ function Get-COMFolder {
 		Write-Verbose "Using $($device.Name) ($($device.Type))."
 		
 		# Retrieve the root folder of the attached device.
-		$deviceRoot = $script:ShellApp.Namespace($device.Path)
+		$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
 
 		# Return a reference to the requested path on the device.
 		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
@@ -485,7 +484,6 @@ $cleanupJob = Start-Job -ScriptBlock {
 	}
 } -ArgumentList $script:FileList
 
-New-ShellApplication
 
 Clear-TempFolder
 
