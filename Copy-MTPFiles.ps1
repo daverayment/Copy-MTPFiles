@@ -373,17 +373,19 @@ function Send-SingleFile {
 			throw "Error: unable to transfer the file ""$filename""."
 		}
 		finally {
-			# Remove the file from the temporary folder.
-			Remove-Item -Path $tempItem.Path -ErrorAction Ignore
+			# Add the temporary file to the clean-up list.
+			$script:FileList.Add((New-Object PSObject -Property @{
+				"Path" = $tempItem.Path
+				"StartTime" = Get-Date
+			}))
 		}
 
 		if ($Move) {
-			try {
-				Remove-Item -Path $FileItem.Path -ErrorAction Stop
-			}
-			catch {
-				throw "Error: unable to delete the source file."
-			}
+			# Add the source file to be cleaned up when finished.
+			$script:FileList.Add((New-Object PSObject -Property @{
+				"Path" = $FileItem.Path
+				"StartTime" = Get-Date
+			}))
 		}
 	}
 
@@ -397,31 +399,89 @@ function Send-SingleFile {
 
 function Complete-Transfers {
 	param(
+		[Parameter(Mandatory = $true)]
+		[System.Management.Automation.Job]$CleanupJob,
+
 		[int]$FileCount = 0
 	)
 
-	# TODO: COMPLETE!
+	Write-Debug "Adding sentinel value to cleanup list."
+	$script:FileList.Add((New-Object PSObject -Property @{
+		"Path" = [string]::Empty
+		"StartTime" = [datetime]::MinValue
+	}))
+
+	Write-Debug "Waiting on cleanup job to complete."
+	Wait-Job $CleanupJob
+
+	Write-Debug "Removing completed cleanup job."
+	Remove-Job $CleanupJob
 
 	Write-Output "$FileCount file(s) $script:MovedCopied."
 
-	# NB: at this point, we do not know if transfers are still in flight, so we prompt for the user to confirm.
-	Write-Warning "Transfers may still be in progress"
-	Read-Host "All transfer requests have been made. Please confirm all transfers have completed then press [Enter]."
-	Start-Sleep -Seconds 1
 	Clear-TempFolder
 }
 
 
 Write-Output "Copy-MTPFiles started."
 
-New-ShellApplication
-
-Clear-TempFolder
-
 if ($List) {
 	Write-MTPDevices
 	return
 }
+
+# Used to share details of the transferring files with the cleanup job.
+$script:FileList = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+
+# The cleanup job is used to remove temporary files and is also relied upon to keep the script running while transfers are still happening.
+$cleanupJob = Start-Job -ScriptBlock {
+	param(
+		[System.Collections.ArrayList]$SyncFileList
+	)
+
+	$timeoutSeconds = 5 * 60
+	$running = $true
+
+	while ($running) {
+		if ($SyncFileList.Count -gt 0) {
+			for ($i = 0; $i -lt $SyncFileList.Count; i++) {
+				$file = $SyncFileList[$i]
+				# Check for sentinel value. If it's the only one in the list, we've finished.
+				if ($file.Path -eq [string]::Empty -and $file.StartTime -eq [datetime]::MinValue) {
+					if ($SyncFileList.Count -eq 1) {
+						Write-Debug "Finished clean-up on all files."
+						$running = $false
+					}
+					continue
+				}
+
+				# Try to open the file for writing, which will fail if the file is still transferring.
+				try {
+					[IO.File]::OpenWrite($file.Path).Close()
+					Remove-Item -Path $file.Path
+					$SyncFileList.RemoveAt($i)
+					$i--
+					Write-Debug "Clean-up: Removed file ""$($file.Path)""."
+				}
+				catch {
+					if (((Get-Date) - $file.StartTime).TotalSeconds -gt $timeoutSeconds) {
+						Write-Warning "Timeout reached while waiting for file lock to be released for file $($file.Path)"
+						$SyncFileList.RemoveAt($i)
+						$i--
+					}
+					# Next file
+					continue
+				}
+			}
+		}
+
+		Start-Sleep -Seconds 1
+	}
+} -ArgumentList $script:FileList
+
+New-ShellApplication
+
+Clear-TempFolder
 
 Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
 
@@ -450,7 +510,7 @@ if ($Move) {
 }
 
 if ($null -eq $sourceFolder) {
-	throw "Source folder ""$SourceDirectory"" either not found or could not be created."
+	throw "Source folder ""$SourceDirectory"" could not be found or created."
 }
 
 Write-Debug "Found source folder ""$SourceDirectory""."
@@ -497,7 +557,7 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 			}
 		}
 
-		Complete-Transfers -FileCount $i 
+		Complete-Transfers -CleanupJob $cleanupJob -FileCount $i 
 	}
 }
 else {
@@ -515,7 +575,7 @@ else {
 		Write-Output "No matching files found."
 	}
 	else {
-		Complete-Transfers -FileCount $i
+		Complete-Transfers -CleanupJob $cleanupJob -FileCount $i
 	}
 }
 
