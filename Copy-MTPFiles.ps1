@@ -75,7 +75,7 @@ function Get-MTPDevices {
 }
 
 # Lists all the attached MTP-compatible devices.
-function Write-MTPDevices {
+function Show-MTPDevices {
 	$devices = Get-MTPDevices
 
 	if ($devices.Count -eq 0) {
@@ -245,12 +245,13 @@ function Get-MTPFolderByPath {
 				$nextFolder = $ParentFolder.ParseName($directory)
 			}
 			else {
-				# In the -WhatIf scenario, we do not simulate the creation of missing directories, for now.
+				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
 				throw "Cannot continue without creating new directory ""$directory"". Exiting."
 			}
 		}
 		if ($null -eq $nextFolder) {
-			throw "Could not create new directory ""$directory"". Please confirm you have adequate permissions on the device."
+			throw "Could not create new directory ""$directory"". Please confirm you have adequate " +
+				"permissions on the device."
 		}
 
 		# Continue looping until all subfolders have been navigated.
@@ -260,7 +261,7 @@ function Get-MTPFolderByPath {
 	return $ParentFolder
 }
 
-# Get a COM reference to a directory, creating it if it doesn't already exist.
+# Get a COM reference to a local or device directory, creating it if it doesn't already exist.
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
@@ -270,19 +271,11 @@ function Get-COMFolder {
 	)
 
 	if (Test-IsHostDirectory($DirectoryPath)) {
-		# Is a non-MTP path, i.e. on the host device.
-		# Create the path if it doesn't already exist and return a COM reference to it.
-		if (-not (Test-Path -Path $DirectoryPath)) {
-			try {
-				New-Item -Type Directory -Path $DirectoryPath
-			}
-			catch {
-				throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
-			}
-			if (-not (Test-Path -Path $DirectoryPath)) {
-				# We get here if the Confirm prompt was declined.
-				throw "Cannot continue without creating full ""$DirectoryPath"" path."
-			}
+		try {
+			New-Item -Type Directory -Path $DirectoryPath -Force
+		}
+		catch {
+			throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
 		}
 		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
@@ -302,7 +295,8 @@ function Get-COMFolder {
 				}
 			}
 			else {
-				throw "Multiple MTP-compatible devices found. Please use the 'DeviceName' parameter to specify the device to use. Use the 'List' switch to list all compatible device names."
+				throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to " +
+					"specify the device to use. Use the '-List' switch to list all compatible device names."
 			}
 		}
 		else {
@@ -402,7 +396,7 @@ function Send-SingleFile {
 	}
 }
 
-function Complete-Transfers {
+function Complete-FileTransfers {
 	param(
 		[Parameter(Mandatory = $true)]
 		[System.Management.Automation.Job]$CleanupJob,
@@ -431,7 +425,7 @@ function Complete-Transfers {
 Write-Output "Copy-MTPFiles started."
 
 if ($List) {
-	Write-MTPDevices
+	Show-MTPDevices
 	return
 }
 
@@ -561,7 +555,7 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 			}
 		}
 
-		Complete-Transfers -CleanupJob $cleanupJob -FileCount $i 
+		Complete-FileTransfers -CleanupJob $cleanupJob -FileCount $i 
 	}
 }
 else {
@@ -579,7 +573,7 @@ else {
 		Write-Output "No matching files found."
 	}
 	else {
-		Complete-Transfers -CleanupJob $cleanupJob -FileCount $i
+		Complete-FileTransfers -CleanupJob $cleanupJob -FileCount $i
 	}
 }
 
