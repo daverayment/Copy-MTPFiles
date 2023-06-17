@@ -31,7 +31,6 @@
 
 	.\Copy-MTPFiles.ps1 -List
 #>
-
 [CmdletBinding(SupportsShouldProcess)]
 param(
 	[switch]$PreScan,
@@ -51,6 +50,51 @@ param(
 	[string[]]$FilenamePatterns = "*"
 )
 
+. ./Copy-MTPFilesFunctions.ps1
+
+# Check script parameters and setup script-level variables for source and destination.
+function Set-TransferDirectories {
+	Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
+
+	if ([string]::IsNullOrEmpty($SourceDirectory)) {
+		throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the folder " +
+			"from which to transfer files."
+	}
+
+	if ([string]::IsNullOrEmpty($DestinationDirectory)) {
+		throw "No destination directory provided. Please use the 'DestinationDirectory' parameter to set " +
+			"the folder where the files will be transferred."
+	}
+
+	if (($SourceDirectory -eq $DestinationDirectory) -or
+		([IO.Path]::GetFullPath($SourceDirectory) -eq [IO.Path]::GetFullPath($DestinationDirectory))) {
+		throw "Source and Destination directories cannot be the same."
+	}
+
+	$script:SourceFolder = Get-COMFolder $SourceDirectory
+	$script:DestinationFolder = Get-COMFolder $DestinationDirectory
+
+	$script:SourceOnHost = Test-IsHostDirectory -DirectoryPath $SourceDirectory
+	$script:DestinationOnHost = Test-IsHostDirectory -DirectoryPath $DestinationDirectory
+
+	$script:MovedCopied = "copied"
+	if ($Move) {
+		$script:MovedCopied = "moved"
+	}
+
+	if ($null -eq $script:SourceFolder) {
+		throw "Source folder ""$SourceDirectory"" could not be found or created."
+	}
+
+	Write-Debug "Found source folder ""$SourceDirectory""."
+
+	if ($null -eq $script:DestinationFolder) {
+		throw "Destination folder ""$DestinationDirectory"" could not be found or created."
+	}
+
+	Write-Debug "Found destination folder ""$DestinationDirectory""."
+}
+
 # Ensure we have a script-level Shell Application object for COM interactions.
 function Get-ShellApplication {
 	if ($null -eq $script:ShellApp) {
@@ -69,283 +113,29 @@ function Get-ShellApplication {
 	$script:ShellApp
 }
 
-# Retrieve all the MTP-compatible devices.
-function Get-MTPDevices {
-	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
-}
 
-# Lists all the attached MTP-compatible devices.
-function Show-MTPDevices {
-	$devices = Get-MTPDevices
-
-	if ($devices.Count -eq 0) {
-		Write-Host "No MTP-compatible devices found."
-	}
-	elseif ($devices.Count -eq 1) {
-		Write-Host "One MTP device found."
-		Write-Host "  Device name: $($devices.Name), Type: $($devices.Type)"
-	}
-	else {
-		Write-Host "Listing attached MTP devices."
-		foreach ($device in $devices) {
-			Write-Host "  Device name: $($device.Name), Type: $($device.Type)"
-		}
-	}
-}
-
-# For more efficient processing, create a single regular expression to represent the filename patterns.
-function Convert-WildcardsToRegex {
-    param(
-        [Parameter(Mandatory=$true)]
-		[ValidateNotNullOrEmpty()]
-        [string[]]$Patterns
-    )
-
-    # Convert each pattern to a regex, and join them with "|".
-	$regex = $($Patterns | ForEach-Object {
-        "^$([Regex]::Escape($_).Replace('\*', '.*').Replace('\?', '.'))$"
-    }) -join "|"
-	Write-Debug "Filename matching regex: $regex"
-
-	# We could potentially be using the same regex thousands of times, so compile it. Also ensure matching is case-insensitive.
-	$options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
-    return New-Object System.Text.RegularExpressions.Regex ($regex, $options)
-}
-
-# Generate a new filename with a unique number suffix.
-# Note: this function does not currently have an upper bound for the numeric suffix.
-function Get-UniqueFilename {
-	param(
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$Folder,
-
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$Filename
-	)
-
-	$baseName = [IO.Path]::GetFileNameWithoutExtension($Filename)
-	$extension = [IO.Path]::GetExtension($Filename)
-	$counter = 1
-
-	do {
-		$newName = "$baseName ($counter)$extension"
-		$counter++
-	}
-	while ($Folder.ParseName($newName))
-
-	return $newName
-}
-
-function Get-TempFolderPath {
-	return Join-Path -Path $Env:TEMP -ChildPath "TempCopyMTPFiles"
-}
-
-function Clear-TempFolder {
-	$tempPath = Get-TempFolderPath
-
-	if (-not (Test-Path -Path $tempPath)) {
-		New-Item -Path $tempPath -ItemType Directory | Out-Null
-	}
-	else {
-		$tempPath | Get-ChildItem | Remove-Item
-	}
-}
-
-# Copy the file to be transferred into our temporary folder, renaming it if 
-# necessary to ensure there is no name conflict with a file in the destination.
-# If a duplicate is detected, we append a unique numeric suffix.
-function Copy-FileToTemp {
-	param(
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[Alias("Item")]
-		[System.__ComObject]$FileItem,
-
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$DestinationFolder
-	)
-
-	$tempDirectory = Get-TempFolderPath
-	$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
-
-	$filename = $FileItem.Name
-
-	Write-Debug "Transferring $filename to temporary folder..."
-	if ($Move) {
-		$tempFolder.MoveHere($FileItem)
-	}
-	else {
-		$tempFolder.CopyHere($FileItem)
-	}
-	Write-Debug "Done"
-
-	# Does the file need to be renamed?
-	if ($DestinationFolder.ParseName($filename))
-	{
-		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $filename
-		Write-Warning "A file with the same name already exists. Renaming to $newName."
-
-		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $filename
-		$tempFilePathNew = Join-Path -Path $tempDirectory -ChildPath $newName
-		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
-		$filename = $newName
-	}
-
-	# Return the newly-transferred temp file.
-	return $tempFolder.ParseName($filename)
-}
-
-function Get-MTPFolderByName {
-	param (
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$ParentFolder,
-
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$FolderName
-	)
-
-	foreach ($item in $ParentFolder.Items()) {
-		Write-Verbose "Checking $($item.Name)..."
-		if ($item.IsFolder -and $item.Name -eq $FolderName) {
-			return $item.GetFolder
-		}
-	}
-
-	return $null
-}
-
-# Retrieve an MTP folder by path. Returns $null if part of the path is not found.
-function Get-MTPFolderByPath {
-	[CmdletBinding(SupportsShouldProcess)]
-	param(
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$ParentFolder,
-
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$FolderPath
-	)
-
-	# Loop through each path subfolder in turn, creating folders if they don't already exist.
-	foreach ($directory in $FolderPath.Split('/')) {
-		$nextFolder = $ParentFolder.ParseName($directory)
-		if (-not $nextFolder.IsFolder) {
-			throw "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
-		}
-		# Create a new directory if it doesn't already exist.
-		if ($null -eq $nextFolder) {
-			if ($PSCmdlet.ShouldProcess($directory, "Create directory")) {
-				$ParentFolder.NewFolder($directory)
-				$nextFolder = $ParentFolder.ParseName($directory)
-			}
-			else {
-				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
-				throw "Cannot continue without creating new directory ""$directory"". Exiting."
-			}
-		}
-		if ($null -eq $nextFolder) {
-			throw "Could not create new directory ""$directory"". Please confirm you have adequate " +
-				"permissions on the device."
-		}
-
-		# Continue looping until all subfolders have been navigated.
-		$ParentFolder = $nextFolder.GetFolder
-	}
-
-	return $ParentFolder
-}
-
-# Get a COM reference to a local or device directory, creating it if it doesn't already exist.
-function Get-COMFolder {
-	[CmdletBinding(SupportsShouldProcess)]
-	param(
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$DirectoryPath
-	)
-
-	if (Test-IsHostDirectory($DirectoryPath)) {
-		try {
-			New-Item -Type Directory -Path $DirectoryPath -Force
-		}
-		catch {
-			throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
-		}
-		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
-	}
-	else {
-		# Retrieve the portable devices connected to the computer.
-		$devices = Get-MTPDevices
-
-		if ($devices.Count -eq 0) {
-			throw "No compatible devices found. Please connect a device in Transfer Files mode."
-		}
-		elseif ($devices.Count -gt 1) {
-			if ($DeviceName) {
-				$device = $devices | Where-Object { $_.Name -ieq $DeviceName }
-		
-				if (-not $device) {
-					throw "Device ""$DeviceName"" not found."
-				}
-			}
-			else {
-				throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to " +
-					"specify the device to use. Use the '-List' switch to list all compatible device names."
-			}
-		}
-		else {
-			$device = $devices
-		}
-
-		Write-Verbose "Using $($device.Name) ($($device.Type))."
-		
-		# Retrieve the root folder of the attached device.
-		$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
-
-		# Return a reference to the requested path on the device.
-		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
-	}
-}
-
-# Returns whether the provided path is formatted like one from the host
-# computer. Note: this does not check whether the directory exists.
-function Test-IsHostDirectory {
-	param(
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$DirectoryPath
-	)
-
-	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
-}
-
-# Transfer a file from the source to the destination, using our temporary
-# folder as a working area.
+# Transfer a file from the source to the destination or queue it for transfer if it requires MTP transfer.
 function Send-SingleFile {
 	param(
 		[Parameter(Mandatory = $true)]
 		[System.__ComObject]$FileItem,
 
-		[Parameter(Mandatory = $true)]
-		[System.__ComObject]$DestinationFolder,
+		[Array]$Jobs,
 
-		[int]$FileNumber,
+		[int]$TotalFiles,
 
-		[int]$TotalFiles = 0
+		[int]$FileNumber
 	)
 
 	$filename = $FileItem.Name
+	# TODO: Cache the temp vars so they aren't recalculated each time through?
+	$tempDirectory = Get-TempFolderPath
+	$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
 
 	if ($script:SourceOnHost -and $script:DestinationOnHost) {
-		# Use Powershell built-in commands if possible.
+		# Use synchronous Powershell built-in commands if possible.
 		try {
-			$destinationUnique = Join-Path -Path $DestinationDirectory -ChildPath (Get-UniqueFilename -Folder $DestinationFolder -Filename $filename)
+			$destinationUnique = Join-Path -Path $DestinationDirectory -ChildPath (Get-UniqueFilename -Folder $script:DestinationFolder -Filename $filename)
 			if ($Move) {
 				Move-Item -Path $item.Path -Destination $destinationUnique -Confirm:$false
 			}
@@ -354,71 +144,58 @@ function Send-SingleFile {
 			}
 		}
 		catch {
-			throw "Error: unable to transfer the file ""$filename""."
+			Write-Error "Error: Unable to transfer the file ""$filename"". Exception: $($_.Exception.Message)"
+			if ($_.Exception.InnerException) {
+				Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
+			}
 		}
 	}
 	else {
+		# Queue for async processing otherwise.
 		try {
-			$tempItem = New-TemporaryFile -Item $FileItem -DestinationFolder $DestinationFolder
+			$jobId = $currentJobId++
 
-			if ($Move) {
-				$DestinationFolder.MoveHere($tempItem)
-			}
-			else {
-				$DestinationFolder.CopyHere($tempItem)
-			}
+			# $job = Start-Job -ScriptBlock {
+			# 	param(
+			# 		$FnNewTempFile,
+			# 		$JobId,
+			# 		$FileItem,
+			# 		$DestinationFolder,
+			# 		$TempDirectory,
+			# 		$TempFolder,
+			# 		$Move
+			# 	)
+			# 	. ${function:FnNewTempFile}
+
+				$timeoutSeconds = 5 * 60
+				$filename = $FileItem.Name
+
+				Write-Debug ("JOB {0:D4}: START. Beginning transfer of file ""$filename""." -f $JobId)
+
+				$tempFile = New-TemporaryFile $FileItem $DestinationFolder $TempDirectory $TempFolder
+
+				# Transfer the file to the destination folder.
+				$DestinationFolder.CopyHere($tempFile)
+
+				# Clean-up the temp file.
+				Remove-LockedFile -FilePath $tempFile.Path
+
+				if ($Move) {
+					# Remove the source file.
+					Remove-LockedFile -FilePath $item.Path
+				}
+
+			# } -ArgumentList ${function:New-TemporaryFile}, $jobId, $FileItem, $script:DestinationFolder, $tempDirectory, $tempFolder, $Move
+
+			$Jobs += $job
 		}
 		catch {
-			throw "Error: unable to transfer the file ""$filename""."
-		}
-		finally {
-			# Add the temporary file to the clean-up list.
-			$script:FileList.Add((New-Object PSObject -Property @{
-				"Path" = $tempItem.Path
-				"StartTime" = Get-Date
-			}))
-		}
-
-		if ($Move) {
-			# Add the source file to be cleaned up when finished.
-			$script:FileList.Add((New-Object PSObject -Property @{
-				"Path" = $FileItem.Path
-				"StartTime" = Get-Date
-			}))
+			Write-Error "Error: Unable to queue the file ""$filename"" for transfer. Exception: $($_.Exception.Message)"
+			if ($_.Exception.InnerException) {
+				Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
+			}
 		}
 	}
-
-	if ($TotalFiles -gt 0) {
-		Write-Progress -Activity "Transferring files" -Status """$filename"" transferred. $FileNumber out of $TotalFiles $script:MovedCopied." -PercentComplete ($FileNumber / $TotalFiles * 100)
-	}
-	else {
-		Write-Progress -Activity "Transferring files" -Status """$filename"" $script:MovedCopied to destination."
-	}
-}
-
-function Complete-FileTransfers {
-	param(
-		[Parameter(Mandatory = $true)]
-		[System.Management.Automation.Job]$CleanupJob,
-
-		[int]$FileCount = 0
-	)
-
-	Write-Debug "Adding sentinel value to cleanup list."
-	$script:FileList.Add((New-Object PSObject -Property @{
-		"Path" = [string]::Empty
-		"StartTime" = [datetime]::MinValue
-	}))
-
-	Write-Debug "Waiting on cleanup job to complete."
-	Wait-Job $CleanupJob
-
-	Write-Debug "Removing completed cleanup job."
-	Remove-Job $CleanupJob
-
-	Write-Output "$FileCount file(s) $script:MovedCopied."
-
-	Clear-TempFolder
 }
 
 
@@ -429,97 +206,17 @@ if ($List) {
 	return
 }
 
-# Used to share details of the transferring files with the cleanup job.
-$script:FileList = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
-
-# The cleanup job is used to remove temporary files and is also relied upon to keep the script running while transfers are still happening.
-$cleanupJob = Start-Job -ScriptBlock {
-	param(
-		[System.Collections.ArrayList]$SyncFileList
-	)
-
-	$timeoutSeconds = 5 * 60
-	$running = $true
-
-	while ($running) {
-		if ($SyncFileList.Count -gt 0) {
-			for ($i = 0; $i -lt $SyncFileList.Count; i++) {
-				$file = $SyncFileList[$i]
-				# Check for sentinel value. If it's the only one in the list, we've finished.
-				if ($file.Path -eq [string]::Empty -and $file.StartTime -eq [datetime]::MinValue) {
-					if ($SyncFileList.Count -eq 1) {
-						Write-Debug "Finished clean-up on all files."
-						$running = $false
-					}
-					continue
-				}
-
-				# Try to open the file for writing, which will fail if the file is still transferring.
-				try {
-					[IO.File]::OpenWrite($file.Path).Close()
-					Remove-Item -Path $file.Path
-					$SyncFileList.RemoveAt($i)
-					$i--
-					Write-Debug "Clean-up: Removed file ""$($file.Path)""."
-				}
-				catch {
-					if (((Get-Date) - $file.StartTime).TotalSeconds -gt $timeoutSeconds) {
-						Write-Warning "Timeout reached while waiting for file lock to be released for file $($file.Path)"
-						$SyncFileList.RemoveAt($i)
-						$i--
-					}
-					# Next file
-					continue
-				}
-			}
-		}
-
-		Start-Sleep -Seconds 1
-	}
-} -ArgumentList $script:FileList
-
-
 Clear-TempFolder
 
-Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
+Set-TransferDirectories
 
-if ([string]::IsNullOrEmpty($SourceDirectory)) {
-	throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the folder from which to transfer files."
-}
-
-if ([string]::IsNullOrEmpty($DestinationDirectory)) {
-	throw "No destination directory provided. Please use the 'DestinationDirectory' parameter to set the folder where the files will be transferred."
-}
-
-if (($SourceDirectory -eq $DestinationDirectory) -or
-	([IO.Path]::GetFullPath($SourceDirectory) -eq [IO.Path]::GetFullPath($DestinationDirectory))) {
-	throw "Source and Destination directories cannot be the same."
-}
-
-$script:SourceOnHost = Test-IsHostDirectory -DirectoryPath $SourceDirectory
-$script:DestinationOnHost = Test-IsHostDirectory -DirectoryPath $DestinationDirectory
-
-$sourceFolder = Get-COMFolder $SourceDirectory
-$destinationFolder = Get-COMFolder $DestinationDirectory
-
-$script:MovedCopied = "copied"
-if ($Move) {
-	$script:MovedCopied = "moved"
-}
-
-if ($null -eq $sourceFolder) {
-	throw "Source folder ""$SourceDirectory"" could not be found or created."
-}
-
-Write-Debug "Found source folder ""$SourceDirectory""."
-
-if ($null -eq $destinationFolder) {
-	throw "Destination folder ""$DestinationDirectory"" either not found or could not be created."
-}
-
-Write-Debug "Found destination folder ""$DestinationDirectory""."
+$tempDirectory = Get-TempFolderPath
+$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
 
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
+
+$currentJobId = 1
+$jobs = @()
 
 if ($PSBoundParameters.ContainsKey("PreScan")) {
 	# Holds all the files in the source directory which match the file pattern(s).
@@ -527,11 +224,11 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 
 	# For the scanned items progress bar.
 	Write-Progress -Activity "Scanning files" -Status "Counting total files."
-	$totalItems = $sourceFolder.Items().Count
+	$totalItems = $script:SourceFolder.Items().Count
 	$i = 0
 
 	# Scan the source folder for items which match the filename pattern(s).
-	foreach ($item in $sourceFolder.Items()) {
+	foreach ($item in $script:SourceFolder.Items()) {
 		if ($item.Name -match $regexPattern) {
 			$filesToTransfer += $item
 		}
@@ -551,7 +248,7 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 		foreach ($item in $filesToTransfer) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -DestinationFolder $destinationFolder -FileNumber $i -TotalFiles $totalItems
+				Send-SingleFile -FileItem $item -FileNumber $i -TotalFiles $totalItems
 			}
 		}
 
@@ -561,11 +258,11 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 else {
 	# Transfer files immediately, without scanning or confirmation.
 	$i = 0
-	foreach ($item in $sourceFolder.Items()) {
+	foreach ($item in $script:SourceFolder.Items()) {
 		if ($item.Name -match $regexPattern) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -DestinationFolder $destinationFolder
+				Send-SingleFile -FileItem $item -DestinationFolder $script:DestinationFolder
 			}
 		}
 	}
