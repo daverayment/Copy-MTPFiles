@@ -3,13 +3,13 @@
 	This script transfers files to or from a portable device via MTP - the Media Transfer Protocol.
 .DESCRIPTION
 	The script accepts the following parameters:
-	- PreScan: A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
+	- Scan (Alias: PreScan): A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
-	- List: A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
-	- DeviceName: The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
-	- SourceDirectory: The path to the source directory.
-	- DestinationDirectory: The path to the destination directory.
-	- FilenamePatterns: An array of filename patterns to search for. Defaults to matching all files.
+	- List (Alias: l): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
+	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
+	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
+	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
+	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
 .LINK
 	https://github.com/daverayment/Copy-MTPFiles
 .NOTES
@@ -17,7 +17,7 @@
 .EXAMPLE
 	Move files with a .doc or .pdf extension from the Download directory on the device to a specified directory on the host:
 	
-	.\Copy-MTPFiles.ps1 -Move -SourceDirectory "Internal storage/Download" -DestinationDirectory "C:\Projects\Documents" -FilenamePatterns "*.doc", "*.pdf"
+	.\Copy-MTPFiles.ps1 -Move -Source "Internal storage/Download" -Destination "C:\Projects\Documents" -Patterns "*.doc", "*.pdf"
 .EXAMPLE
 	Copy files with a .jpg extension from the Download directory on the device to the current folder:
 
@@ -25,28 +25,34 @@
 .EXAMPLE
 	Move all files from the current directory on the host computer to the Download directory on the portable device:
 
-	.\Copy-MTPFiles.ps1 -Move -SourceDirectory "." -DestinationDirectory "Internal storage/Download"
+	.\Copy-MTPFiles.ps1 -Move -Source "." -Destination "Internal storage/Download"
 .EXAMPLE
 	List all compatible devices which are currently attached:
 
-	.\Copy-MTPFiles.ps1 -List
+	.\Copy-MTPFiles.ps1 -l
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
+	[Alias("Scan")]
 	[switch]$PreScan,
 
 	[switch]$Move,
 
+	[Alias("l")]
 	[switch]$List,
 
+	[Alias("Device", "dn")]
 	[string]$DeviceName,
 
+	[Alias("SourceFolder", "Source", "s")]
 	[ValidateNotNullOrEmpty()]
 	[string]$SourceDirectory = (Get-Location).Path,
 
+	[Alias("DestinationFolder", "Destination", "Dest", "d")]
 	[ValidateNotNullOrEmpty()]
 	[string]$DestinationDirectory = (Get-Location).Path,
 
+	[Alias("Patterns", "p")]
 	[string[]]$FilenamePatterns = "*"
 )
 
