@@ -46,11 +46,11 @@ param(
 
 	[Alias("SourceFolder", "Source", "s")]
 	[ValidateNotNullOrEmpty()]
-	[string]$SourceDirectory = (Get-Location).Path,
+	[string]$SourceDirectory = $PWD.Path,
 
 	[Alias("DestinationFolder", "Destination", "Dest", "d")]
 	[ValidateNotNullOrEmpty()]
-	[string]$DestinationDirectory = (Get-Location).Path,
+	[string]$DestinationDirectory = $PWD.Path,
 
 	[Alias("Patterns", "p")]
 	[string[]]$FilenamePatterns = "*"
@@ -60,28 +60,33 @@ param(
 
 # Check script parameters and setup script-level variables for source and destination.
 function Set-TransferDirectories {
-	Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
-
 	if ([string]::IsNullOrEmpty($SourceDirectory)) {
-		throw "No source directory provided. Please use the 'SourceDirectory' parameter to set the folder " +
-			"from which to transfer files."
+		Write-Error ("No source directory provided. Please use the 'SourceDirectory' parameter to set the folder " +
+			"from which to transfer files.") -ErrorAction Stop
 	}
-
 	if ([string]::IsNullOrEmpty($DestinationDirectory)) {
-		throw "No destination directory provided. Please use the 'DestinationDirectory' parameter to set " +
-			"the folder where the files will be transferred."
+		Write-Error ("No destination directory provided. Please use the 'DestinationDirectory' parameter to set " +
+			"the folder where the files will be transferred.") -ErrorAction Stop
 	}
-
-	if (($SourceDirectory -eq $DestinationDirectory) -or
-		([IO.Path]::GetFullPath($SourceDirectory) -eq [IO.Path]::GetFullPath($DestinationDirectory))) {
-		throw "Source and Destination directories cannot be the same."
-	}
-
-	$script:SourceFolder = Get-COMFolder $SourceDirectory
-	$script:DestinationFolder = Get-COMFolder $DestinationDirectory
 
 	$script:SourceOnHost = Test-IsHostDirectory -DirectoryPath $SourceDirectory
 	$script:DestinationOnHost = Test-IsHostDirectory -DirectoryPath $DestinationDirectory
+
+	if ($script:SourceOnHost) {
+		$SourceDirectory = Convert-PathToAbsolute -Path $SourceDirectory
+	}
+	if ($script:DestinationOnHost) {
+		$DestinationDirectory = Convert-PathToAbsolute -Path $DestinationDirectory
+	}
+
+	$script:SourceFolder = Get-COMFolder -DirectoryPath $SourceDirectory -DeviceName $DeviceName
+	$script:DestinationFolder = Get-COMFolder -DirectoryPath $DestinationDirectory -DeviceName $DeviceName
+
+	Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
+
+	if ($SourceDirectory -ieq $DestinationDirectory) {
+		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop
+	}
 
 	$script:MovedCopied = "copied"
 	if ($Move) {
@@ -89,13 +94,13 @@ function Set-TransferDirectories {
 	}
 
 	if ($null -eq $script:SourceFolder) {
-		throw "Source folder ""$SourceDirectory"" could not be found or created."
+		Write-Error "Source folder ""$SourceDirectory"" could not be found or created." -ErrorAction Stop
 	}
 
 	Write-Debug "Found source folder ""$SourceDirectory""."
 
 	if ($null -eq $script:DestinationFolder) {
-		throw "Destination folder ""$DestinationDirectory"" could not be found or created."
+		Write-Error "Destination folder ""$DestinationDirectory"" could not be found or created." -ErrorAction Stop
 	}
 
 	Write-Debug "Found destination folder ""$DestinationDirectory""."

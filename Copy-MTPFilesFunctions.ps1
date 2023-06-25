@@ -34,7 +34,18 @@ function Test-IsHostDirectory {
 	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
 }
 
-# Get a COM reference to a local or device directory, creating it if it doesn't already exist.
+function Convert-PathToAbsolute {
+	param([string]$Path)
+
+	if ([System.IO.Path]::IsPathRooted($Path)) {
+		return $Path
+	}
+	else {
+		# How many times can I write Path on a single line?
+		return (Resolve-Path -Path (Join-Path -Path $PWD.Path -ChildPath $Path)).Path
+	}
+}
+
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
