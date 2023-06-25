@@ -251,32 +251,46 @@ function New-TemporaryFile {
 	return $tempFolder.ParseName($filename)
 }
 
+# Remove a file from the host or an attached device, waiting for any activity on it to finish first.
 function Remove-LockedFile {
     param(
         [Parameter(Mandatory=$true)]
-        [string]$FilePath,
+        [System.__ComObject]$FileItem,
+
+		[System.__ComObject]$Folder,
+
+		[bool]$IsOnHost = $true,
 
         [int]$TimeoutSeconds = 5 * 60
     )
 
-    # Wait for the file to be released.
+	Write-Debug "Removing file '$($FileItem.Path)'..."
+
     $start = Get-Date
 
     do {
 		try {
-			Remove-Item $FilePath
+			if ($IsOnHost) {
+				Remove-Item $FileItem.Path
+			}
+			else {
+				$Folder.Delete($FileItem.Name)
+			}
+
 			$locked = $false
 		}
         catch {
-            # If we catch an exception, the file is locked
-            Write-Debug "File '$FilePath' is locked."
+			# If we catch an exception, the file is locked.
+			Write-Debug "File '$($FileItem.Path)' is locked."
             $locked = $true
 
 			if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
-				throw "Removal of file '$FilePath' timed out."
+				throw "Removal of file '$($FileItem.Path)' timed out."
 			}
 
             Start-Sleep -Milliseconds 500
         }
     } while ($locked)
+
+	Write-Debug "File '$($FileItem.Path)' removed."
 }

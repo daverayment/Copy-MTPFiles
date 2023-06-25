@@ -207,6 +207,10 @@ function Send-SingleFile {
 			}
 		}
 	}
+
+	if ($Wait -and $null -ne $script:LastTemporaryFileItem) {
+		Remove-LockedFile -FileItem $script:LastTemporaryFileItem -Folder $script:TempFolder
+	}
 }
 
 
