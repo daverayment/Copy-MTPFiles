@@ -109,42 +109,32 @@ function Set-TransferDirectories {
 # Ensure we have a script-level Shell Application object for COM interactions.
 function Get-ShellApplication {
 	if ($null -eq $script:ShellApp) {
-		try {
-			$script:ShellApp = New-Object -ComObject Shell.Application
-			if ($null -eq $script:ShellApp) {
-				throw "Failed to create a COM Shell Application object."
-			}	
-		}
-		catch {
-			Write-Error -Message $_
-			exit 1
+		$script:ShellApp = New-Object -ComObject Shell.Application
+		if ($null -eq $script:ShellApp) {
+			Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop
 		}
 	}
 
 	$script:ShellApp
 }
 
-
-# Transfer a file from the source to the destination or queue it for transfer if it requires MTP transfer.
+# Transfer a file from the source to the destination.
 function Send-SingleFile {
 	param(
 		[Parameter(Mandatory = $true)]
 		[System.__ComObject]$FileItem,
 
-		[Array]$Jobs,
+		[int]$TotalFiles = -1,
 
-		[int]$TotalFiles,
+		[int]$FileNumber,
 
-		[int]$FileNumber
+		[switch]$Verify
 	)
 
 	$filename = $FileItem.Name
-	# TODO: Cache the temp vars so they aren't recalculated each time through?
-	$tempDirectory = Get-TempFolderPath
-	$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
 
 	if ($script:SourceOnHost -and $script:DestinationOnHost) {
-		# Use synchronous Powershell built-in commands if possible.
+		# Use Powershell built-in commands if possible.
 		try {
 			$destinationUnique = Join-Path -Path $DestinationDirectory -ChildPath (Get-UniqueFilename -Folder $script:DestinationFolder -Filename $filename)
 			if ($Move) {
@@ -162,48 +152,38 @@ function Send-SingleFile {
 		}
 	}
 	else {
-		# Queue for async processing otherwise.
+		# MTP transfer.
+		Write-Output "Doing MTP transfer of file ""$filename""..."
+		$tempFile = New-TemporaryFile -FileItem $FileItem -DestinationFolder $DestinationFolder -TempDirectory $script:TempDirectory -TempFolder $script:TempFolder -Move $Move
+		$DestinationFolder.CopyHere($tempFile)
+		$script:LastTemporaryFileItem = $tempFile
+		if ($Move) {
+			$script:SourceFilesToDelete.Enqueue(@{
+				Item = $FileItem
+				Folder = $SourceFolder
+				IsOnHost = $SourceOnHost
+			})
+		}
+
+		Clear-WorkingFiles
+	}
+}
+
+function Clear-WorkingFiles {
+	param([switch]$Wait)
+
+	foreach ($file in Get-ChildItem (Get-TempFolderPath)) {
+		if ($file.FullName -eq $script:LastTemporaryFileItem.Path) {
+			continue
+		}
+
 		try {
-			$jobId = $currentJobId++
-
-			# $job = Start-Job -ScriptBlock {
-			# 	param(
-			# 		$FnNewTempFile,
-			# 		$JobId,
-			# 		$FileItem,
-			# 		$DestinationFolder,
-			# 		$TempDirectory,
-			# 		$TempFolder,
-			# 		$Move
-			# 	)
-			# 	. ${function:FnNewTempFile}
-
-				$timeoutSeconds = 5 * 60
-				$filename = $FileItem.Name
-
-				Write-Debug ("JOB {0:D4}: START. Beginning transfer of file ""$filename""." -f $JobId)
-
-				$tempFile = New-TemporaryFile $FileItem $DestinationFolder $TempDirectory $TempFolder
-
-				# Transfer the file to the destination folder.
-				$DestinationFolder.CopyHere($tempFile)
-
-				# Clean-up the temp file.
-				Remove-LockedFile -FilePath $tempFile.Path
-
-				if ($Move) {
-					# Remove the source file.
-					Remove-LockedFile -FilePath $item.Path
-				}
-
-			# } -ArgumentList ${function:New-TemporaryFile}, $jobId, $FileItem, $script:DestinationFolder, $tempDirectory, $tempFolder, $Move
-
-			$Jobs += $job
+			$file.Delete()
 		}
 		catch {
-			Write-Error "Error: Unable to queue the file ""$filename"" for transfer. Exception: $($_.Exception.Message)"
-			if ($_.Exception.InnerException) {
-				Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
+			Write-Error "Failed to delete $($file.FullName): $($file.Exception.Message)"
+			if ($file.Exception.InnerException) {
+				Write-Error "Inner Exception: $($file.Exception.InnerException.Message)"
 			}
 		}
 	}
@@ -225,13 +205,13 @@ Clear-TempFolder
 
 Set-TransferDirectories
 
-$tempDirectory = Get-TempFolderPath
-$tempFolder = (Get-ShellApplication).Namespace($tempDirectory)
-
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
-$currentJobId = 1
-$jobs = @()
+$script:TempDirectory = Get-TempFolderPath
+$script:TempFolder = (Get-ShellApplication).Namespace($script:TempDirectory)
+
+$script:LastTemporaryFileItem = $null
+$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
 if ($PSBoundParameters.ContainsKey("PreScan")) {
 	# Holds all the files in the source directory which match the file pattern(s).
@@ -263,11 +243,9 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 		foreach ($item in $filesToTransfer) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -FileNumber $i -TotalFiles $totalItems
+				Send-SingleFile -FileItem $item -TotalFiles $totalItems -FileNumber $i
 			}
 		}
-
-		Complete-FileTransfers -CleanupJob $cleanupJob -FileCount $i 
 	}
 }
 else {
@@ -277,16 +255,16 @@ else {
 		if ($item.Name -match $regexPattern) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -DestinationFolder $script:DestinationFolder
+				Send-SingleFile -FileItem $item -FileNumber $i
 			}
 		}
 	}
 	if ($i -eq 0) {
 		Write-Output "No matching files found."
 	}
-	else {
-		Complete-FileTransfers -CleanupJob $cleanupJob -FileCount $i
-	}
 }
 
+Clear-WorkingFiles -Wait
+
+Write-Output "$i file(s) transferred."
 Write-Output "Finished."

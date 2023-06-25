@@ -8,22 +8,22 @@ function Show-MTPDevices {
 	$devices = Get-MTPDevices
 
 	if ($devices.Count -eq 0) {
-		Write-Host "No MTP-compatible devices found."
+		Write-Host "No MTP-compatible devices found. Please connect an MTP-compatible device in Transfer Files mode and try again."
 	}
 	elseif ($devices.Count -eq 1) {
-		Write-Host "One MTP device found."
+		Write-Host "1 MTP device found."
 		Write-Host "  Device name: $($devices.Name), Type: $($devices.Type)"
 	}
 	else {
-		Write-Host "Listing attached MTP devices."
-		foreach ($device in $devices) {
-			Write-Host "  Device name: $($device.Name), Type: $($device.Type)"
+		Write-Host "$($devices.Count) MTP devices found."
+		$devices | ForEach-Object {
+			Write-Host "  Device name: $($_.Name), Type: $($_.Type)"
 		}
 	}
 }
 
-# Returns whether the provided path is formatted like one from the host
-# computer. Note: this does not check whether the directory exists.
+# Returns whether the provided path is formatted like one from the host computer.
+# Note: this does not check whether the directory exists.
 function Test-IsHostDirectory {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -46,20 +46,29 @@ function Convert-PathToAbsolute {
 	}
 }
 
+# Retrieves a COM reference to a local or device directory. If the directory does not exist,
+# it is created. If a device is not specified and multiple MTP-compatible devices are found,
+# an error is thrown.
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[string]$DirectoryPath
+		[string]$DirectoryPath,
+
+		[string]$DeviceName
 	)
 
-	if (Test-IsHostDirectory($DirectoryPath)) {
+	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
 		if (-not (Test-Path -Path $DirectoryPath)) {
 			try {
-				New-Item -Type Directory -Path $DirectoryPath -Force
+				New-Item -Type Directory -Path $DirectoryPath -Force | Out-Null
 			}
 			catch {
+				Write-Error "Failed to create directory ""$DirectoryPath"". Exception: $($_.Exception.Message)"
+				if ($_.Exception.InnerException) {
+					Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
+				}
 				throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
 			}				
 		}
@@ -94,7 +103,7 @@ function Get-COMFolder {
 		# Retrieve the root folder of the attached device.
 		$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
 
-		# Return a reference to the requested path on the device.
+		# Return a reference to the requested path on the device. Creates folders if required.
 		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
 	}
 }
@@ -151,7 +160,7 @@ function Convert-WildcardsToRegex {
 
     # Convert each pattern to a regex, and join them with "|".
 	$regex = $($Patterns | ForEach-Object {
-        "^$([Regex]::Escape($_).Replace('\*', '.*').Replace('\?', '.'))$"
+		"^$([Regex]::Escape($_).Replace('\*', '.*').Replace('\?', '.'))$"
     }) -join "|"
 	Write-Debug "Filename matching regex: $regex"
 
@@ -160,8 +169,9 @@ function Convert-WildcardsToRegex {
     return New-Object System.Text.RegularExpressions.Regex ($regex, $options)
 }
 
-# Generate a new filename with a unique number suffix.
-# Note: this function does not currently have an upper bound for the numeric suffix.
+# Generate a unique filename in the destination directory. If the passed-in filename already exists, a new
+# filename is generated with a numeric suffix in parentheses. An upper-bound of 1000 files with the same
+# basename is used. If this limit is exceeded, an exception is thrown.
 function Get-UniqueFilename {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -172,6 +182,11 @@ function Get-UniqueFilename {
 		[ValidateNotNullOrEmpty()]
 		[string]$Filename
 	)
+
+	# If the filename does not exist, simply return it.
+	if (-not ($Folder.ParseName($Filename))) {
+		return $Filename
+	}
 
 	$baseName = [IO.Path]::GetFileNameWithoutExtension($Filename)
 	$extension = [IO.Path]::GetExtension($Filename)
@@ -184,8 +199,7 @@ function Get-UniqueFilename {
 		if ($counter -gt $limit) {
 			throw "Reached iteration limit ($limit) while trying to generate a unique filename."
 		}
-	}
-	while ($Folder.ParseName($newName))
+	} while ($Folder.ParseName($newName))
 
 	return $newName
 }
@@ -220,13 +234,15 @@ function New-TemporaryFile {
 
 		[string]$TempDirectory,
 
-		[System.__ComObject]$TempFolder
+		[System.__ComObject]$TempFolder,
+
+		[bool]$Move
 	)
 
 	$filename = $FileItem.Name
 
 	# TODO: is -Force necessary here to account for the possibility of a file with the same name already existing?
-	Write-Debug "Transferring $filename to temporary folder..."
+	Write-Debug "Transferring '$filename' to temporary folder..."
 	if ($Move) {
 		$tempFolder.MoveHere($FileItem)
 	}
@@ -239,7 +255,7 @@ function New-TemporaryFile {
 	if ($DestinationFolder.ParseName($filename))
 	{
 		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $filename
-		Write-Warning "A file with the same name already exists. Renaming to $newName."
+		Write-Warning "A file with the same name already exists. The source file '$filename' will be transferred as '$newName'."
 
 		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $filename
 		$tempFilePathNew = Join-Path -Path $tempDirectory -ChildPath $newName
@@ -279,18 +295,18 @@ function Remove-LockedFile {
 
 			$locked = $false
 		}
-        catch {
+		catch {
 			# If we catch an exception, the file is locked.
 			Write-Debug "File '$($FileItem.Path)' is locked."
-            $locked = $true
+			$locked = $true
 
 			if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
 				throw "Removal of file '$($FileItem.Path)' timed out."
 			}
 
-            Start-Sleep -Milliseconds 500
-        }
-    } while ($locked)
+			Start-Sleep -Milliseconds 500
+		}
+	} while ($locked)
 
 	Write-Debug "File '$($FileItem.Path)' removed."
 }
