@@ -58,33 +58,37 @@ param(
 
 . ./Copy-MTPFilesFunctions.ps1
 
-# Check script parameters and setup script-level variables for source and destination.
+# Create and return a custom object representing the source or destination directory information.
+function Set-TransferObject {
+	param([string]$Directory, [string]$ParameterName, [bool]$IsSource)
+
+	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
+	if ($OnHost) {
+		$Directory = Convert-PathToAbsolute -Path $Directory
+	}
+
+	$Folder = Get-COMFolder -DirectoryPath $Directory -DeviceName $DeviceName -IsSource $IsSource
+
+	if ($null -eq $Folder) {
+		Write-Error "Folder ""$Directory"" could not be found or created." -ErrorAction Stop
+	}
+	Write-Debug "Found folder ""$Directory""."
+
+	[PSCustomObject]@{
+		Directory = $Directory
+		Folder = $Folder
+		OnHost = $OnHost
+	}
+}
+
+# Check script parameters and setup script-level variables for source, destination and temporary directories.
 function Set-TransferDirectories {
-	if ([string]::IsNullOrEmpty($SourceDirectory)) {
-		Write-Error ("No source directory provided. Please use the 'SourceDirectory' parameter to set the folder " +
-			"from which to transfer files.") -ErrorAction Stop
-	}
-	if ([string]::IsNullOrEmpty($DestinationDirectory)) {
-		Write-Error ("No destination directory provided. Please use the 'DestinationDirectory' parameter to set " +
-			"the folder where the files will be transferred.") -ErrorAction Stop
-	}
+	$script:Source = Set-TransferObject -Directory $SourceDirectory -ParameterName "SourceDirectory" -IsSource:$true
+	$script:Destination = Set-TransferObject -Directory $DestinationDirectory -ParameterName "DestinationDirectory"
 
-	$script:SourceOnHost = Test-IsHostDirectory -DirectoryPath $SourceDirectory
-	$script:DestinationOnHost = Test-IsHostDirectory -DirectoryPath $DestinationDirectory
+	Write-Output "`nSource directory: ""$($script:Source.Directory)""", "Destination directory: ""$($script:Destination.Directory)""`n"
 
-	if ($script:SourceOnHost) {
-		$SourceDirectory = Convert-PathToAbsolute -Path $SourceDirectory
-	}
-	if ($script:DestinationOnHost) {
-		$DestinationDirectory = Convert-PathToAbsolute -Path $DestinationDirectory
-	}
-
-	$script:SourceFolder = Get-COMFolder -DirectoryPath $SourceDirectory -DeviceName $DeviceName
-	$script:DestinationFolder = Get-COMFolder -DirectoryPath $DestinationDirectory -DeviceName $DeviceName
-
-	Write-Output "`nSource directory: ""$SourceDirectory""", "Destination directory: ""$DestinationDirectory""`n"
-
-	if ($SourceDirectory -ieq $DestinationDirectory) {
+	if ($script:Source.Directory -ieq $script:Destination.Directory) {
 		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop
 	}
 
@@ -93,17 +97,12 @@ function Set-TransferDirectories {
 		$script:MovedCopied = "moved"
 	}
 
-	if ($null -eq $script:SourceFolder) {
-		Write-Error "Source folder ""$SourceDirectory"" could not be found or created." -ErrorAction Stop
+	$tempPath = New-TempDirectory
+	$script:Temp = [PSCustomObject]@{
+		Directory = $tempPath
+		Folder = (Get-ShellApplication).Namespace($tempPath)
+		LastFileItem = $null
 	}
-
-	Write-Debug "Found source folder ""$SourceDirectory""."
-
-	if ($null -eq $script:DestinationFolder) {
-		Write-Error "Destination folder ""$DestinationDirectory"" could not be found or created." -ErrorAction Stop
-	}
-
-	Write-Debug "Found destination folder ""$DestinationDirectory""."
 }
 
 # Ensure we have a script-level Shell Application object for COM interactions.
@@ -124,24 +123,20 @@ function Send-SingleFile {
 		[Parameter(Mandatory = $true)]
 		[System.__ComObject]$FileItem,
 
-		[int]$TotalFiles = -1,
-
-		[int]$FileNumber,
-
-		[switch]$Verify
+		[int]$TotalFiles = -1
 	)
 
 	$filename = $FileItem.Name
 
-	if ($script:SourceOnHost -and $script:DestinationOnHost) {
+	if ($script:Source.OnHost -and $script:Destination.OnHost) {
 		# Use Powershell built-in commands if possible.
 		try {
-			$destinationUnique = Join-Path -Path $DestinationDirectory -ChildPath (Get-UniqueFilename -Folder $script:DestinationFolder -Filename $filename)
+			$destinationUnique = Join-Path -Path $script:Destination.Directory -ChildPath (Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename)
 			if ($Move) {
-				Move-Item -Path $item.Path -Destination $destinationUnique -Confirm:$false
+				Move-Item -Path $FileItem.Path -Destination $destinationUnique -Confirm:$false
 			}
 			else {
-				Copy-Item -Path $item.Path -Destination $destinationUnique -Confirm:$false
+				Copy-Item -Path $FileItem.Path -Destination $destinationUnique -Confirm:$false
 			}
 		}
 		catch {
@@ -152,11 +147,10 @@ function Send-SingleFile {
 		}
 	}
 	else {
-		# MTP transfer.
-		Write-Output "Doing MTP transfer of file ""$filename""..."
-		$tempFile = New-TemporaryFile -FileItem $FileItem -DestinationFolder $DestinationFolder -TempDirectory $script:TempDirectory -TempFolder $script:TempFolder -Move $Move
-		$DestinationFolder.CopyHere($tempFile)
-		$script:LastTemporaryFileItem = $tempFile
+		# MTP transfer using our temporary directory as a working area.
+		$tempFile = New-TemporaryFile -FileItem $FileItem
+		$script:Destination.Folder.CopyHere($tempFile)
+		$script:Temp.LastFileItem = $tempFile
 		if ($Move) {
 			$script:SourceFilesToDelete.Enqueue(@{
 				Item = $FileItem
@@ -169,11 +163,13 @@ function Send-SingleFile {
 	}
 }
 
+# Clear all but the most recent file from the temporary directory.
+# TODO: also remove source files if this is a Move.
 function Clear-WorkingFiles {
 	param([switch]$Wait)
 
-	foreach ($file in Get-ChildItem (Get-TempFolderPath)) {
-		if ($file.FullName -eq $script:LastTemporaryFileItem.Path) {
+	foreach ($file in Get-ChildItem ($script:Temp.Directory)) {
+		if ($file.FullName -eq $script:Temp.LastFileItem.Path) {
 			continue
 		}
 
@@ -181,69 +177,65 @@ function Clear-WorkingFiles {
 			$file.Delete()
 		}
 		catch {
-			Write-Error "Failed to delete $($file.FullName): $($file.Exception.Message)"
-			if ($file.Exception.InnerException) {
-				Write-Error "Inner Exception: $($file.Exception.InnerException.Message)"
+			Write-Error "Failed to delete $($file.FullName): $($_.Exception.Message)"
+			if ($_.Exception.InnerException) {
+				Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
 			}
 		}
 	}
 
-	if ($Wait -and $null -ne $script:LastTemporaryFileItem) {
-		Remove-LockedFile -FileItem $script:LastTemporaryFileItem -Folder $script:TempFolder
+	if ($Wait -and $null -ne $script:Temp.LastFileItem) {
+		# Start-Sleep -Milliseconds 200
+		Remove-LockedFile -FileItem $script:Temp.LastFileItem -Folder $script:Temp.Folder
 	}
 }
 
-
-Write-Output "Copy-MTPFiles started."
-
+# Main script start.
 if ($List) {
 	Show-MTPDevices
 	return
 }
 
-Clear-TempFolder
+Remove-TempDirectories
 
 Set-TransferDirectories
 
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
-$script:TempDirectory = Get-TempFolderPath
-$script:TempFolder = (Get-ShellApplication).Namespace($script:TempDirectory)
-
-$script:LastTemporaryFileItem = $null
 $script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
-if ($PSBoundParameters.ContainsKey("PreScan")) {
+if ($PreScan) {
 	# Holds all the files in the source directory which match the file pattern(s).
 	$filesToTransfer = @()
 
 	# For the scanned items progress bar.
-	Write-Progress -Activity "Scanning files" -Status "Counting total files."
-	$totalItems = $script:SourceFolder.Items().Count
+	Write-Progress -Id 1 -Activity "Scanning files" -Status "Counting total files."
+	$totalItems = $script:Source.Folder.Items().Count
 	$i = 0
 
 	# Scan the source folder for items which match the filename pattern(s).
-	foreach ($item in $script:SourceFolder.Items()) {
+	foreach ($item in $script:Source.Folder.Items()) {
 		if ($item.Name -match $regexPattern) {
 			$filesToTransfer += $item
 		}
 
 		# Progress bar.
 		$i++
-		Write-Progress -Activity "Scanning files" -Status "$i out of $totalItems processed" -PercentComplete ($i / $totalItems * 100)
+		Write-Progress -Id 1 -Activity "Scanning files" -Status "$i out of $totalItems processed" -PercentComplete ($i / $totalItems * 100)
 	}
 	if ($filesToTransfer.Count -eq 0) {
 		Write-Output "No files to transfer."
 		return
 	}
 	else {
-		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$SourceDirectory"" to ""$DestinationDirectory""."
+		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$($script:Source.Directory)"" to ""$($script:Destination.Directory)""."
 		$totalItems = $filesToTransfer.Count
 		$i = 0
 		foreach ($item in $filesToTransfer) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -TotalFiles $totalItems -FileNumber $i
+				Write-Progress -Id 2 -Activity "Transferring files" -Status "Transferring $($item.Name) - File $i out of $totalItems" -PercentComplete ($i / $totalItems * 100)
+				Send-SingleFile -FileItem $item -TotalFiles $totalItems
 			}
 		}
 	}
@@ -251,11 +243,11 @@ if ($PSBoundParameters.ContainsKey("PreScan")) {
 else {
 	# Transfer files immediately, without scanning or confirmation.
 	$i = 0
-	foreach ($item in $script:SourceFolder.Items()) {
+	foreach ($item in $script:Source.Folder.Items()) {
 		if ($item.Name -match $regexPattern) {
 			$i++
 			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item -FileNumber $i
+				Send-SingleFile -FileItem $item
 			}
 		}
 	}

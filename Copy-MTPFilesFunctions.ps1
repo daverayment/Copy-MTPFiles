@@ -31,9 +31,10 @@ function Test-IsHostDirectory {
 		[string]$DirectoryPath
 	)
 
-	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
+	$DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
 }
 
+# Converts a path to an absolute path, correctly resolving relative paths.
 function Convert-PathToAbsolute {
 	param([string]$Path)
 
@@ -41,8 +42,11 @@ function Convert-PathToAbsolute {
 		return $Path
 	}
 	else {
-		# How many times can I write Path on a single line?
-		return (Resolve-Path -Path (Join-Path -Path $PWD.Path -ChildPath $Path)).Path
+		$absPath = Join-Path -Path $PWD.Path -ChildPath $Path
+		if (-not (Test-Path $absPath)) {
+			New-Item -ItemType Directory -Path $absPath -Force | Out-Null
+		}
+		return (Resolve-Path -Path $absPath).Path
 	}
 }
 
@@ -56,7 +60,9 @@ function Get-COMFolder {
 		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath,
 
-		[string]$DeviceName
+		[string]$DeviceName,
+
+		[bool]$IsSource
 	)
 
 	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
@@ -90,8 +96,7 @@ function Get-COMFolder {
 				}
 			}
 			else {
-				throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to " +
-					"specify the device to use. Use the '-List' switch to list all compatible device names."
+				throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-List' switch to list all compatible device names."
 			}
 		}
 		else {
@@ -104,7 +109,7 @@ function Get-COMFolder {
 		$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
 
 		# Return a reference to the requested path on the device. Creates folders if required.
-		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath
+		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
 	}
 }
 
@@ -118,36 +123,51 @@ function Get-MTPFolderByPath {
 
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[string]$FolderPath
+		[string]$FolderPath,
+
+		[bool]$IsSource
 	)
+
+	Write-Host "Navigating MTP Folders:"
 
 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
 	foreach ($directory in $FolderPath.Split('/')) {
+		Write-Host "  $directory..." -NoNewline
+
 		$nextFolder = $ParentFolder.ParseName($directory)
-		if (-not $nextFolder.IsFolder) {
-			throw "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
-		}
+
 		# Create a new directory if it doesn't already exist.
 		if ($null -eq $nextFolder) {
+			if ($IsSource) {
+				Write-Error "Source directory ""$directory"" not found." -ErrorAction Stop
+			}
+
 			if ($PSCmdlet.ShouldProcess($directory, "Create directory")) {
 				$ParentFolder.NewFolder($directory)
 				$nextFolder = $ParentFolder.ParseName($directory)
 			}
 			else {
 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
-				throw "Cannot continue without creating new directory ""$directory"". Exiting."
+				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting." -ErrorAction Stop
 			}
+
+			if ($null -eq $nextFolder) {
+				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
+					"permissions on the device.") -ErrorAction Stop
+			}	
 		}
-		if ($null -eq $nextFolder) {
-			throw "Could not create new directory ""$directory"". Please confirm you have adequate " +
-				"permissions on the device."
+		elseif (-not $nextFolder.IsFolder) {
+			# The item was found, but it wasn't a folder.
+			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""." -ErrorAction Stop
 		}
 
 		# Continue looping until all subfolders have been navigated.
 		$ParentFolder = $nextFolder.GetFolder
+
+		Write-Host "done."
 	}
 
-	return $ParentFolder
+	$ParentFolder
 }
 
 # For more efficient processing, create a single regular expression to represent the filename patterns.
@@ -204,19 +224,21 @@ function Get-UniqueFilename {
 	return $newName
 }
 
-function Get-TempFolderPath {
-	return Join-Path -Path $Env:TEMP -ChildPath "TempCopyMTPFiles"
+# Delete any pre-existing temporary directories.
+function Remove-TempDirectories {
+	Get-ChildItem -Path $Env:TEMP -Directory |
+		Where-Object { $_.Name -like "CopyMTPFiles*" } |
+		ForEach-Object { Remove-Item -Path $_.FullName -Recurse -Force }
 }
 
-function Clear-TempFolder {
-	$tempPath = Get-TempFolderPath
+# Create a uniquely-named temporary directory for this run.
+function New-TempDirectory {
+	$rnd = Get-Random -Maximum 1000	# 0-999
+	$tempDirectoryName = "CopyMTPFiles{0:D3}" -f $rnd
+	$tempDirectoryPath = Join-Path -Path $Env:TEMP -ChildPath $tempDirectoryName
+	New-Item -Path $tempDirectoryPath -ItemType Directory | Out-Null
 
-	if (-not (Test-Path -Path $tempPath)) {
-		New-Item -Path $tempPath -ItemType Directory | Out-Null
-	}
-
-	# Remove all files (including hidden and system files) from our temp folder.
-	Get-ChildItem -Path $tempPath -Recurse -Force | Remove-Item -Force -Recurse
+	$tempDirectoryPath
 }
 
 # Copy the file to be transferred into our temporary folder, renaming it if 
@@ -226,45 +248,33 @@ function New-TemporaryFile {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$FileItem,
-
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$DestinationFolder,
-
-		[string]$TempDirectory,
-
-		[System.__ComObject]$TempFolder,
-
-		[bool]$Move
+		[System.__ComObject]$FileItem
 	)
 
 	$filename = $FileItem.Name
 
 	# TODO: is -Force necessary here to account for the possibility of a file with the same name already existing?
-	Write-Debug "Transferring '$filename' to temporary folder..."
 	if ($Move) {
-		$tempFolder.MoveHere($FileItem)
+		$script:Temp.Folder.MoveHere($FileItem)
 	}
 	else {
-		$tempFolder.CopyHere($FileItem)
+		$script:Temp.Folder.CopyHere($FileItem)
 	}
-	Write-Debug "Done"
 
 	# Does the file need to be renamed?
-	if ($DestinationFolder.ParseName($filename))
+	if ($script:Destination.Folder.ParseName($filename))
 	{
-		$newName = Get-UniqueFilename -Folder $DestinationFolder -Filename $filename
+		$newName = Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename
 		Write-Warning "A file with the same name already exists. The source file '$filename' will be transferred as '$newName'."
 
-		$tempFilePathOld = Join-Path -Path $tempDirectory -ChildPath $filename
-		$tempFilePathNew = Join-Path -Path $tempDirectory -ChildPath $newName
+		$tempFilePathOld = Join-Path -Path $script:Temp.Directory -ChildPath $filename
+		$tempFilePathNew = Join-Path -Path $script:Temp.Directory -ChildPath $newName
 		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
 		$filename = $newName
 	}
 
 	# Return the newly-transferred temp file.
-	return $tempFolder.ParseName($filename)
+	return $script:Temp.Folder.ParseName($filename)
 }
 
 # Remove a file from the host or an attached device, waiting for any activity on it to finish first.
@@ -283,6 +293,15 @@ function Remove-LockedFile {
 	Write-Debug "Removing file '$($FileItem.Path)'..."
 
     $start = Get-Date
+
+	# First wait for the file to start transferring.
+	$file = $script:Destination.Folder.ParseName($FileItem.Name)
+	while ($null -eq $fileItem) {
+		Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
+		Start-Sleep -Milliseconds 500
+		$file = $script:Destination.Folder.ParseName($FileItem.Name)
+		# TODO: timeout
+	}
 
     do {
 		try {
