@@ -80,37 +80,35 @@ function Get-COMFolder {
 		}
 		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
-	else {
-		# Retrieve the portable devices connected to the computer.
-		$devices = Get-MTPDevices
 
-		if ($devices.Count -eq 0) {
-			throw "No compatible devices found. Please connect a device in Transfer Files mode."
-		}
-		elseif ($devices.Count -gt 1) {
-			if ($DeviceName) {
-				$device = $devices | Where-Object { $_.Name -ieq $DeviceName }
-		
-				if (-not $device) {
-					throw "Device ""$DeviceName"" not found."
-				}
-			}
-			else {
-				throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-List' switch to list all compatible device names."
-			}
-		}
-		else {
-			$device = $devices
-		}
+	# Retrieve the portable devices connected to the computer.
+	$devices = Get-MTPDevices
 
-		Write-Verbose "Using $($device.Name) ($($device.Type))."
-		
-		# Retrieve the root folder of the attached device.
-		$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
-
-		# Return a reference to the requested path on the device. Creates folders if required.
-		return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
+	if ($devices.Count -eq 0) {
+		throw "No compatible devices found. Please connect a device in Transfer Files mode."
 	}
+	elseif ($devices.Count -gt 1 -and -not $DeviceName) {
+		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-List' switch to list all compatible device names."
+	}
+
+	$device = if ($DeviceName) {
+		$devices | Where-Object { $_.Name -ieq $DeviceName }
+	}
+	else {
+		$devices
+	}
+	
+	if (-not $device) {
+		throw "Device ""$DeviceName"" not found."
+	}
+
+	Write-Verbose "Using $($device.Name) ($($device.Type))."
+	
+	# Retrieve the root folder of the attached device.
+	$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
+
+	# Return a reference to the requested path on the device. Creates folders if required.
+	return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
 }
 
 # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
@@ -257,7 +255,6 @@ function New-TemporaryFile {
 
 	$filename = $FileItem.Name
 
-	# TODO: is -Force necessary here to account for the possibility of a file with the same name already existing?
 	if ($Move) {
 		$script:Temp.Folder.MoveHere($FileItem)
 	}
@@ -300,9 +297,15 @@ function Remove-LockedFile {
 
 	# First wait for the file to start transferring.
 	$file = $script:Destination.Folder.ParseName($FileItem.Name)
-	while ($null -eq $fileItem) {
+	while ($null -eq $file) {
 		Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
+
+		if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
+			throw "Removal of file '$($FileItem.Path)' timed out."
+		}
+
 		Start-Sleep -Milliseconds 500
+		
 		$file = $script:Destination.Folder.ParseName($FileItem.Name)
 		# TODO: timeout
 	}
