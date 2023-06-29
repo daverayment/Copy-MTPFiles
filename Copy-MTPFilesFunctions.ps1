@@ -255,12 +255,8 @@ function New-TemporaryFile {
 
 	$filename = $FileItem.Name
 
-	if ($Move) {
-		$script:Temp.Folder.MoveHere($FileItem)
-	}
-	else {
-		$script:Temp.Folder.CopyHere($FileItem)
-	}
+	# Always copy. If it's a move operation, the source file will be cleaned up post-transfer.
+	$script:Temp.Folder.CopyHere($FileItem)
 
 	# Does the file need to be renamed?
 	if ($script:Destination.Folder.ParseName($filename))

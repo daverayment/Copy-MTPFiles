@@ -5,7 +5,7 @@
 	The script accepts the following parameters:
 	- Scan (Alias: PreScan): A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
-	- List (Alias: l): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
+	- ListDevices (Alias: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
 	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
 	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
 	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
@@ -38,8 +38,8 @@ param(
 
 	[switch]$Move,
 
-	[Alias("l")]
-	[switch]$List,
+	[Alias("GetDevices", "ld")]
+	[switch]$ListDevices,
 
 	[Alias("Device", "dn")]
 	[string]$DeviceName,
@@ -57,6 +57,8 @@ param(
 )
 
 . ./Copy-MTPFilesFunctions.ps1
+
+Set-StrictMode -Version 2.0
 
 # Create and return a custom object representing the source or destination directory information.
 function Set-TransferObject {
@@ -152,19 +154,14 @@ function Send-SingleFile {
 		$script:Destination.Folder.CopyHere($tempFile)
 		$script:Temp.LastFileItem = $tempFile
 		if ($Move) {
-			$script:SourceFilesToDelete.Enqueue(@{
-				Item = $FileItem
-				Folder = $SourceFolder
-				IsOnHost = $SourceOnHost
-			})
+			$script:SourceFilesToDelete.Enqueue($FileItem)
 		}
 
 		Clear-WorkingFiles
 	}
 }
 
-# Clear all but the most recent file from the temporary directory.
-# TODO: also remove source files if this is a Move.
+# Clear all but the most recent file from the temporary directory. Also remove source files if this is a Move.
 function Clear-WorkingFiles {
 	param([switch]$Wait)
 
@@ -185,16 +182,32 @@ function Clear-WorkingFiles {
 	}
 
 	if ($Wait -and $null -ne $script:Temp.LastFileItem) {
-		# Start-Sleep -Milliseconds 200
 		Remove-LockedFile -FileItem $script:Temp.LastFileItem -Folder $script:Temp.Folder
+	}
+
+	while ($script:SourceFilesToDelete.Count -gt 0) {
+		$sourceFile = $script:SourceFilesToDelete.Dequeue()
+		if ($script:Source.OnHost) {
+			if (Test-Path -Path $sourceFile.Path) {
+				Remove-Item -Path $sourceFile.Path -Force
+			}
+			else {
+				Write-Warning "File at path $($sourceFile.Path) not found."
+			}
+		}
+		else {
+			$script:Source.Folder.Delete($sourceFile.Name)
+		}
 	}
 }
 
 # Main script start.
-if ($List) {
+if ($ListDevices) {
 	Show-MTPDevices
 	return
 }
+
+$script:ShellApp = $null
 
 Remove-TempDirectories
 
