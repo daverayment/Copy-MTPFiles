@@ -136,35 +136,39 @@ function Get-MTPFolderByPath {
 
 		$nextFolder = $ParentFolder.ParseName($directory)
 
-		# Create a new directory if it doesn't already exist.
-		if ($null -eq $nextFolder) {
-			if ($IsSource) {
-				Write-Error "Source directory ""$directory"" not found." -ErrorAction Stop
-			}
+		# The source folder must exist.
+		if ($IsSource -and $null -eq $nextFolder) {
+			Write-Error "Source directory ""$directory"" not found." -ErrorAction Stop
+		}
 
-			if ($PSCmdlet.ShouldProcess($directory, "Create directory")) {
-				$ParentFolder.NewFolder($directory)
-				$nextFolder = $ParentFolder.ParseName($directory)
-			}
-			else {
+		# If the folder doesn't already exist, try to create it.
+		if ($null -eq $nextFolder) {
+			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
 				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting." -ErrorAction Stop
 			}
 
+			$ParentFolder.NewFolder($directory)
+			$nextFolder = $ParentFolder.ParseName($directory)
+
+			# If creation failed, write error and stop.
 			if ($null -eq $nextFolder) {
 				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
 					"permissions on the device.") -ErrorAction Stop
-			}	
+			}
+
+			Write-Host "created."
 		}
+		# If the item was found but it isn't a folder, write 
 		elseif (-not $nextFolder.IsFolder) {
-			# The item was found, but it wasn't a folder.
 			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""." -ErrorAction Stop
+		}
+		else {
+			Write-Host "done."
 		}
 
 		# Continue looping until all subfolders have been navigated.
 		$ParentFolder = $nextFolder.GetFolder
-
-		Write-Host "done."
 	}
 
 	$ParentFolder
