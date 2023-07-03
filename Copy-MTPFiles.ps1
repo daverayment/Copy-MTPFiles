@@ -5,8 +5,9 @@
 	The script accepts the following parameters:
 	- Scan (Alias: PreScan): A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
-	- ListDevices (Alias: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
+	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
 	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
+	- ListFiles (Aliases: GetFiles, lf): Lists all files in the specified directory. For host directories, this returns a PowerShell file listing as usual; for device directories, this returns objects with Name, Length, LastWriteTime and Type properties.
 	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
 	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
 	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
@@ -33,6 +34,16 @@
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
+	[Alias("SourceFolder", "Source", "s")]
+	[ValidateNotNullOrEmpty()]
+	[Parameter(Position=0)]
+	[string]$SourceDirectory = $PWD.Path,
+
+	[Alias("DestinationFolder", "Destination", "Dest", "d")]
+	[ValidateNotNullOrEmpty()]
+	[Parameter(Position=1)]
+	[string]$DestinationDirectory = $PWD.Path,
+
 	[Alias("Scan")]
 	[switch]$PreScan,
 
@@ -44,13 +55,8 @@ param(
 	[Alias("Device", "dn")]
 	[string]$DeviceName,
 
-	[Alias("SourceFolder", "Source", "s")]
-	[ValidateNotNullOrEmpty()]
-	[string]$SourceDirectory = $PWD.Path,
-
-	[Alias("DestinationFolder", "Destination", "Dest", "d")]
-	[ValidateNotNullOrEmpty()]
-	[string]$DestinationDirectory = $PWD.Path,
+	[Alias("GetFiles", "lf")]
+	[string]$ListFiles,
 
 	[Alias("Patterns", "p")]
 	[string[]]$FilenamePatterns = "*"
@@ -208,6 +214,11 @@ if ($ListDevices) {
 }
 
 $script:ShellApp = $null
+
+if ($ListFiles) {
+	List-Files $ListFiles $DeviceName
+	return
+}
 
 Remove-TempDirectories
 
