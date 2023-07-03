@@ -84,11 +84,11 @@ function Get-COMFolder {
 	# Retrieve the portable devices connected to the computer.
 	$devices = Get-MTPDevices
 
-	if ($devices.Count -eq 0) {
+	if ($null -eq $devices) {
 		throw "No compatible devices found. Please connect a device in Transfer Files mode."
 	}
 	elseif ($devices.Count -gt 1 -and -not $DeviceName) {
-		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-List' switch to list all compatible device names."
+		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-ListDevices' switch to list connected compatible devices."
 	}
 
 	$device = if ($DeviceName) {
@@ -331,4 +331,40 @@ function Remove-LockedFile {
 	} while ($locked)
 
 	Write-Debug "File '$($FileItem.Path)' removed."
+}
+
+function List-Files {
+	param(
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]$DirectoryPath,
+
+		[string]$DeviceName
+	)
+
+	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
+		return Get-ChildItem -Path $DirectoryPath
+	}
+
+	$folder = Get-COMFolder -DirectoryPath $DirectoryPath -DeviceName $DeviceName
+	
+	$folder.Items() | ForEach-Object {
+		# 0..287 | Foreach-Object {
+		# 	$propertyValue = $folder.GetDetailsOf($item, $_)
+		# 	if ($propertyValue) {
+		# 		$propertyName = $folder.GetDetailsOf($null, $_)
+		# 		Write-Output "$_ > $propertyName : $propertyValue"
+		# 	}
+		# }
+
+		New-Object PSObject -Property @{
+			Name = $_.Name
+			Length = $_.ExtendedProperty("Size")
+			LastWriteTime = [DateTime]::ParseExact($folder.GetDetailsOf($_, 3), "dd/MM/yyyy HH:mm", $null)
+			Type = $_.Type
+			IsFolder = $_.IsFolder
+		}
+	} |
+	Sort-Object { -not $_.IsFolder }, Name | 
+	Select-Object Type, LastWriteTime, Length, Name
 }
