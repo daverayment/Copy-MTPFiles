@@ -360,7 +360,7 @@ function List-Files {
 		New-Object PSObject -Property @{
 			Name = $_.Name
 			Length = $_.ExtendedProperty("Size")
-			LastWriteTime = [DateTime]::ParseExact($folder.GetDetailsOf($_, 3), "dd/MM/yyyy HH:mm", $null)
+			LastWriteTime = [DateTime]::Parse($folder.GetDetailsOf($_, 3))
 			Type = $_.Type
 			IsFolder = $_.IsFolder
 		}
