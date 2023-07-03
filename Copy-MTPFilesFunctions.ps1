@@ -36,6 +36,7 @@ function Test-IsHostDirectory {
 
 # Converts a path to an absolute path, correctly resolving relative paths.
 function Convert-PathToAbsolute {
+	[CmdletBinding(SupportsShouldProcess=$true)]
 	param([string]$Path)
 
 	if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -43,10 +44,16 @@ function Convert-PathToAbsolute {
 	}
 	else {
 		$absPath = Join-Path -Path $PWD.Path -ChildPath $Path
-		if (-not (Test-Path $absPath)) {
+		if (-not (Test-Path $absPath) -and $PSCmdlet.ShouldProcess($absPath, "Create directory")) {
 			New-Item -ItemType Directory -Path $absPath -Force | Out-Null
 		}
-		return (Resolve-Path -Path $absPath).Path
+
+		if (Test-Path $absPath) {
+			return (Resolve-Path -Path $absPath).Path
+		}
+		else {
+			return $absPath
+		}
 	}
 }
 
@@ -64,6 +71,10 @@ function Get-COMFolder {
 
 		[bool]$IsSource
 	)
+
+	if (-not $IsSource -and -not $PSCmdlet.ShouldProcess($DirectoryPath, "Get folder")) {
+		return $null
+	}
 
 	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
 		if (-not (Test-Path -Path $DirectoryPath)) {
@@ -92,10 +103,10 @@ function Get-COMFolder {
 	}
 
 	$device = if ($DeviceName) {
-		$devices | Where-Object { $_.Name -ieq $DeviceName }
+		return $devices | Where-Object { $_.Name -ieq $DeviceName }
 	}
 	else {
-		$devices
+		return $devices
 	}
 	
 	if (-not $device) {
