@@ -68,6 +68,7 @@ Set-StrictMode -Version 2.0
 
 # Create and return a custom object representing the source or destination directory information.
 function Set-TransferObject {
+	[CmdletBinding(SupportsShouldProcess)]
 	param([string]$Directory, [string]$ParameterName, [bool]$IsSource)
 
 	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
@@ -77,7 +78,7 @@ function Set-TransferObject {
 
 	$Folder = Get-COMFolder -DirectoryPath $Directory -DeviceName $DeviceName -IsSource $IsSource
 
-	if ($null -eq $Folder) {
+	if ($null -eq $Folder -and $PSCmdlet.ShouldProcess($Directory, "Directory error check")) {
 		Write-Error "Folder ""$Directory"" could not be found or created." -ErrorAction Stop
 	}
 	Write-Debug "Found folder ""$Directory""."
@@ -220,7 +221,9 @@ if ($ListFiles) {
 	return
 }
 
-Remove-TempDirectories
+if ($PSCmdlet.ShouldProcess("Temporary folders", "Delete")) {
+	Remove-TempDirectories
+}
 
 Set-TransferDirectories
 
@@ -280,7 +283,9 @@ else {
 	}
 }
 
-Clear-WorkingFiles -Wait
+if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
+	Clear-WorkingFiles -Wait
+}
 
 Write-Output "$i file(s) transferred."
 Write-Output "Finished."
