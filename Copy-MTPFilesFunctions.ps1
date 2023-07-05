@@ -22,6 +22,23 @@ function Show-MTPDevices {
 	}
 }
 
+# Find a matching device and initialise the Device object with its properties.
+function Set-DeviceInfo {
+	$script:Device = $null
+	$devices = Get-MTPDevices
+
+	# There must be at least one device. If multiple devices are found, the device name must be supplied.
+	# If the device name is given, it must match, even if only 1 device is discovered.
+	if ($devices -and ($devices.Count -eq 1 -or $DeviceName)) {
+		$script:Device = if ($DeviceName) {
+			$devices | Where-Object { $_.Name -ieq $DeviceName }
+		}
+		else {
+			$devices
+		}
+	}
+}
+
 # Returns whether the provided path is formatted like one from the host computer.
 # Note: this does not check whether the directory exists.
 function Test-IsHostDirectory {
@@ -103,10 +120,10 @@ function Get-COMFolder {
 	}
 
 	$device = if ($DeviceName) {
-		return $devices | Where-Object { $_.Name -ieq $DeviceName }
+		$devices | Where-Object { $_.Name -ieq $DeviceName }
 	}
 	else {
-		return $devices
+		$devices
 	}
 	
 	if (-not $device) {
