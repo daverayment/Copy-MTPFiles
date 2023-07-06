@@ -3,32 +3,13 @@ function Get-MTPDevices {
 	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 }
 
-# Lists all the attached MTP-compatible devices.
-function Show-MTPDevices {
-	$devices = Get-MTPDevices
-
-	if ($devices.Count -eq 0) {
-		Write-Host "No MTP-compatible devices found. Please connect an MTP-compatible device in Transfer Files mode and try again."
-	}
-	elseif ($devices.Count -eq 1) {
-		Write-Host "1 MTP device found."
-		Write-Host "  Device name: $($devices.Name), Type: $($devices.Type)"
-	}
-	else {
-		Write-Host "$($devices.Count) MTP devices found."
-		$devices | ForEach-Object {
-			Write-Host "  Device name: $($_.Name), Type: $($_.Type)"
-		}
-	}
-}
-
 # Find a matching device and initialise the Device object with its properties.
 function Set-DeviceInfo {
 	$script:Device = $null
 	$devices = Get-MTPDevices
 
 	# There must be at least one device. If multiple devices are found, the device name must be supplied.
-	# If the device name is given, it must match, even if only 1 device is discovered.
+	# If the device name is given, it must match, even if only 1 device is present.
 	if ($devices -and ($devices.Count -eq 1 -or $DeviceName)) {
 		$script:Device = if ($DeviceName) {
 			$devices | Where-Object { $_.Name -ieq $DeviceName }

@@ -208,13 +208,21 @@ function Clear-WorkingFiles {
 	}
 }
 
+
 # Main script start.
+$script:ShellApp = $null
+
 if ($ListDevices) {
-	Show-MTPDevices
+	Get-MTPDevices | ForEach-Object {
+		[PSCustomObject]@{
+			Name = $_.Name
+			Type = $_.Type
+		}
+	}
 	return
 }
 
-$script:ShellApp = $null
+Set-DeviceInfo
 
 if ($ListFiles) {
 	List-Files $ListFiles $DeviceName
