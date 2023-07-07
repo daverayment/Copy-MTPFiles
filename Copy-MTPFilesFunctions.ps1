@@ -135,12 +135,12 @@ function Get-MTPFolderByPath {
 		[bool]$IsSource
 	)
 
-	Write-Host "Navigating MTP Folders:"
+	$sections = $FolderPath.Split('/')
+	$folderIndex = 0
 
 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
 	foreach ($directory in $FolderPath.Split('/')) {
-		Write-Host "  $directory..." -NoNewline
-
+		Write-Progress -Activity "Scanning Device Folders" -Status "Processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
 		$nextFolder = $ParentFolder.ParseName($directory)
 
 		# The source folder must exist.
@@ -150,6 +150,10 @@ function Get-MTPFolderByPath {
 
 		# If the folder doesn't already exist, try to create it.
 		if ($null -eq $nextFolder) {
+			if ($ListFiles -or $ScanOnly) {
+				Write-Error "Folder ""$directory"" not found. Exiting." -ErrorAction Stop
+			}
+
 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
 				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting." -ErrorAction Stop
@@ -170,15 +174,17 @@ function Get-MTPFolderByPath {
 		elseif (-not $nextFolder.IsFolder) {
 			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""." -ErrorAction Stop
 		}
-		else {
-			Write-Host "done."
-		}
 
 		# Continue looping until all subfolders have been navigated.
 		$ParentFolder = $nextFolder.GetFolder
+	
+		$folderIndex++
+		Write-Progress -Activity "Scanning Device Folders" -Status "Completed processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
 	}
 
-	$ParentFolder
+	Write-Progress -Activity "Scanning Device Folders" -Completed
+
+	return $ParentFolder
 }
 
 # For more efficient processing, create a single regular expression to represent the filename patterns.
