@@ -372,14 +372,27 @@ function List-Files {
 		# 	}
 		# }
 
-		New-Object PSObject -Property @{
-			Name = $_.Name
-			Length = $_.ExtendedProperty("Size")
-			LastWriteTime = [DateTime]::Parse($folder.GetDetailsOf($_, 3))
-			Type = $_.Type
-			IsFolder = $_.IsFolder
-		}
+		Format-Item $_ $folder
 	} |
 	Sort-Object { -not $_.IsFolder }, Name | 
 	Select-Object Type, LastWriteTime, Length, Name
+}
+
+# Format a folder item for output.
+function Format-Item {
+	param(
+		[Parameter(Mandatory = $true)]
+		[System.__ComObject]$Item,
+
+		[Parameter(Mandatory = $true)]
+		[System.__ComObject]$Folder
+	)
+
+	New-Object PSObject -Property @{
+		Type = $Item.Type
+		LastWriteTime = [DateTime]::Parse($Folder.GetDetailsOf($Item, 3))
+		Length = $Item.ExtendedProperty("Size")
+		Name = $Item.Name
+		IsFolder = $Item.IsFolder
+	}
 }
