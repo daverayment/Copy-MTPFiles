@@ -3,7 +3,7 @@ function Get-MTPDevices {
 	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 }
 
-# Find a matching device and initialise the Device object with its properties.
+# Find a matching device and initialise the script-level Device object with its properties.
 function Set-DeviceInfo {
 	$script:Device = $null
 	$devices = Get-MTPDevices
@@ -371,7 +371,7 @@ function List-Files {
 		# 		Write-Output "$_ > $propertyName : $propertyValue"
 		# 	}
 		# }
-
+		
 		Format-Item $_ $folder
 	} |
 	Sort-Object { -not $_.IsFolder }, Name | 

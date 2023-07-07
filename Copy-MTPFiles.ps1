@@ -3,14 +3,14 @@
 	This script transfers files to or from a portable device via MTP - the Media Transfer Protocol.
 .DESCRIPTION
 	The script accepts the following parameters:
-	- Scan (Alias: PreScan): A switch which controls whether to scan the source directory before transfers begin. Outputs the number of matching files and allows cancelling before any transfers take place.
+	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
+	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
+	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
 	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
 	- ListFiles (Aliases: GetFiles, lf, ls): Lists all files in the specified directory. For host directories, this returns a PowerShell file listing as usual; for device directories, this returns objects with Name, Length, LastWriteTime and Type properties.
-	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
-	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
-	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
+	- ScanOnly (Alias: Scan): A switch which controls whether to only scan the source directory and show the count of matching files, without actually performing any transfers. A more concise alternative to -WhatIf.
 .LINK
 	https://github.com/daverayment/Copy-MTPFiles
 .NOTES
@@ -39,13 +39,13 @@ param(
 	[Parameter(Position=0)]
 	[string]$SourceDirectory = $PWD.Path,
 
-	[Alias("DestinationFolder", "Destination", "Dest", "d")]
+	[Alias("DestinationFolder", "Destination", "d")]
 	[ValidateNotNullOrEmpty()]
 	[Parameter(Position=1)]
 	[string]$DestinationDirectory = $PWD.Path,
 
 	[Alias("Scan")]
-	[switch]$PreScan,
+	[switch]$ScanOnly,
 
 	[switch]$Move,
 
@@ -239,61 +239,26 @@ $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 $script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
-if ($PreScan) {
-	# Holds all the files in the source directory which match the file pattern(s).
-	$filesToTransfer = @()
-
-	# For the scanned items progress bar.
-	Write-Progress -Id 1 -Activity "Scanning files" -Status "Counting total files."
-	$totalItems = $script:Source.Folder.Items().Count
-	$i = 0
-
-	# Scan the source folder for items which match the filename pattern(s).
-	foreach ($item in $script:Source.Folder.Items()) {
-		if ($item.Name -match $regexPattern) {
-			$filesToTransfer += $item
-		}
-
-		# Progress bar.
+$i = 0
+foreach ($item in $script:Source.Folder.Items()) {
+	if ($item.Name -match $regexPattern) {
 		$i++
-		Write-Progress -Id 1 -Activity "Scanning files" -Status "$i out of $totalItems processed" -PercentComplete ($i / $totalItems * 100)
-	}
-	if ($filesToTransfer.Count -eq 0) {
-		Write-Output "No files to transfer."
-		return
-	}
-	else {
-		Write-Output "$($filesToTransfer.Count) file(s) will be transferred from ""$($script:Source.Directory)"" to ""$($script:Destination.Directory)""."
-		$totalItems = $filesToTransfer.Count
-		$i = 0
-		foreach ($item in $filesToTransfer) {
-			$i++
-			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Write-Progress -Id 2 -Activity "Transferring files" -Status "Transferring $($item.Name) - File $i out of $totalItems" -PercentComplete ($i / $totalItems * 100)
-				Send-SingleFile -FileItem $item -TotalFiles $totalItems
-			}
+		if ($ScanOnly) {
+			Format-Item $item $script:Source.Folder | Select-Object Type, LastWriteTime, Length, Name
+		}
+		elseif ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+			Send-SingleFile -FileItem $item
 		}
 	}
 }
-else {
-	# Transfer files immediately, without scanning or confirmation.
-	$i = 0
-	foreach ($item in $script:Source.Folder.Items()) {
-		if ($item.Name -match $regexPattern) {
-			$i++
-			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item
-			}
-		}
-	}
-	if ($i -eq 0) {
-		Write-Output "No matching files found."
-	}
+if ($i -eq 0) {
+	Write-Output "No matching files found."
 }
 
-if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
-	Clear-WorkingFiles -Wait
+if (-not $ScanOnly) {
+	if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
+		Clear-WorkingFiles -Wait
+	}
+	
+	Write-Output "$i file(s) transferred."
 }
-
-Write-Output "$i file(s) transferred."
-Write-Output "Finished."
