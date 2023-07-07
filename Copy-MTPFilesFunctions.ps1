@@ -29,7 +29,7 @@ function Test-IsHostDirectory {
 		[string]$DirectoryPath
 	)
 
-	$DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath)
+	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath) -or $DirectoryPath.Contains('\')
 }
 
 # Converts a path to an absolute path, correctly resolving relative paths.
