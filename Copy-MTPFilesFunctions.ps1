@@ -65,8 +65,6 @@ function Get-COMFolder {
 		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath,
 
-		[string]$DeviceName,
-
 		[bool]$IsSource
 	)
 
@@ -90,28 +88,16 @@ function Get-COMFolder {
 		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
 
-	# Retrieve the portable devices connected to the computer.
 	$devices = Get-MTPDevices
 
-	if ($null -eq $devices) {
+	if (-not $script:Device) {
 		throw "No compatible devices found. Please connect a device in Transfer Files mode."
 	}
 	elseif ($devices.Count -gt 1 -and -not $DeviceName) {
 		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-ListDevices' switch to list connected compatible devices."
 	}
 
-	$device = if ($DeviceName) {
-		$devices | Where-Object { $_.Name -ieq $DeviceName }
-	}
-	else {
-		$devices
-	}
-	
-	if (-not $device) {
-		throw "Device ""$DeviceName"" not found."
-	}
-
-	Write-Verbose "Using $($device.Name) ($($device.Type))."
+	Write-Verbose "Using $($script:Device.Name) ($($script:Device.Type))."
 	
 	# Retrieve the root folder of the attached device.
 	$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
@@ -348,34 +334,45 @@ function Remove-LockedFile {
 	Write-Debug "File '$($FileItem.Path)' removed."
 }
 
-function List-Files {
+function Get-FileList {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath,
 
-		[string]$DeviceName
+		[string]$RegexPattern
 	)
 
 	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
-		return Get-ChildItem -Path $DirectoryPath
+		$items = Get-ChildItem -Path $DirectoryPath
+		if ($RegexPattern) {
+			$items = $items | Where-Object { $_.Name -match $RegexPattern }
+		}
+		return $items
 	}
 
-	$folder = Get-COMFolder -DirectoryPath $DirectoryPath -DeviceName $DeviceName
+	$folder = Get-COMFolder -DirectoryPath $DirectoryPath
+
+	# 0..287 | Foreach-Object {
+	# 	$propertyValue = $folder.GetDetailsOf($item, $_)
+	# 	if ($propertyValue) {
+	# 		$propertyName = $folder.GetDetailsOf($null, $_)
+	# 		Write-Output "$_ > $propertyName : $propertyValue"
+	# 	}
+	# }
 	
-	$folder.Items() | ForEach-Object {
-		# 0..287 | Foreach-Object {
-		# 	$propertyValue = $folder.GetDetailsOf($item, $_)
-		# 	if ($propertyValue) {
-		# 		$propertyName = $folder.GetDetailsOf($null, $_)
-		# 		Write-Output "$_ > $propertyName : $propertyValue"
-		# 	}
-		# }
-		
-		Format-Item $_ $folder
-	} |
-	Sort-Object { -not $_.IsFolder }, Name | 
-	Select-Object Type, LastWriteTime, Length, Name
+	$formattedItems = $folder.Items() |
+		ForEach-Object {
+			Format-Item $_ $folder
+		}
+	
+	if ($RegexPattern) {
+		$formattedItems = $formattedItems | Where-Object { $_.Name -match $RegexPattern }
+	}
+
+	return $formattedItems |
+		Sort-Object { -not $_.IsFolder }, Name | 
+		Select-Object Type, LastWriteTime, Length, Name
 }
 
 # Format a folder item for output.

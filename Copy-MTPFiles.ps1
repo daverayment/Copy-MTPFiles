@@ -9,8 +9,7 @@
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
 	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
-	- ListFiles (Aliases: GetFiles, lf, ls): Lists all files in the specified directory. For host directories, this returns a PowerShell file listing as usual; for device directories, this returns objects with Name, Length, LastWriteTime and Type properties.
-	- ScanOnly (Alias: Scan): A switch which controls whether to only scan the source directory and show the count of matching files, without actually performing any transfers. A more concise alternative to -WhatIf.
+	- ListFiles (Aliases: GetFiles, lf, ls): Lists all files in the specified directory. For host directories, this returns a PowerShell file listing as usual; for device directories, this returns objects with Name, Length, LastWriteTime and Type properties. May be used in conjunction with -FilenamePatterns to filter the results.
 .LINK
 	https://github.com/daverayment/Copy-MTPFiles
 .NOTES
@@ -36,12 +35,12 @@
 param(
 	[Alias("SourceFolder", "Source", "s")]
 	[ValidateNotNullOrEmpty()]
-	[Parameter(Position=0)]
+	[Parameter(Position = 0)]
 	[string]$SourceDirectory = $PWD.Path,
 
 	[Alias("DestinationFolder", "Destination", "d")]
 	[ValidateNotNullOrEmpty()]
-	[Parameter(Position=1)]
+	[Parameter(Position = 1)]
 	[string]$DestinationDirectory = $PWD.Path,
 
 	[Alias("Scan")]
@@ -224,8 +223,10 @@ if ($ListDevices) {
 
 Set-DeviceInfo
 
-if ($ListFiles) {
-	List-Files $ListFiles $DeviceName
+$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
+
+if ($PSBoundParameters.ContainsKey("ListFiles")) {
+	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
 	return
 }
 
@@ -234,8 +235,6 @@ if ($PSCmdlet.ShouldProcess("Temporary folders", "Delete")) {
 }
 
 Set-TransferDirectories
-
-$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 $script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
