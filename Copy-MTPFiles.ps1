@@ -70,12 +70,14 @@ function Set-TransferObject {
 	[CmdletBinding(SupportsShouldProcess)]
 	param([string]$Directory, [string]$ParameterName, [bool]$IsSource)
 
+	$Directory = $Directory.TrimEnd('/').TrimEnd('\\')
+
 	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
 	if ($OnHost) {
 		$Directory = Convert-PathToAbsolute -Path $Directory
 	}
 
-	$Folder = Get-COMFolder -DirectoryPath $Directory -DeviceName $DeviceName -IsSource $IsSource
+	$Folder = Get-COMFolder -DirectoryPath $Directory -IsSource $IsSource
 
 	if ($null -eq $Folder -and $PSCmdlet.ShouldProcess($Directory, "Directory error check")) {
 		Write-Error "Folder ""$Directory"" could not be found or created." -ErrorAction Stop
