@@ -365,18 +365,12 @@ function Get-FileList {
 	# 	}
 	# }
 	
-	$formattedItems = $folder.Items() |
-		ForEach-Object {
-			Format-Item $_ $folder
+	foreach ($item in $folder.Items()) {
+		if ($RegexPattern -and -not ($item.Name -match $RegexPattern)) {
+			continue
 		}
-	
-	if ($RegexPattern) {
-		$formattedItems = $formattedItems | Where-Object { $_.Name -match $RegexPattern }
+		Format-Item $item $folder
 	}
-
-	return $formattedItems |
-		Sort-Object { -not $_.IsFolder }, Name | 
-		Select-Object Type, LastWriteTime, Length, Name
 }
 
 # Format a folder item for output.

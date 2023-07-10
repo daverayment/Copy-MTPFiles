@@ -232,7 +232,9 @@ Set-DeviceInfo
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 if ($PSBoundParameters.ContainsKey("ListFiles")) {
-	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
+	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern |
+		Select-Object Type, LastWriteTime, Length, Name |
+		Format-List -AutoSize
 	return
 }
 
