@@ -125,7 +125,7 @@ function Get-MTPFolderByPath {
 	$folderIndex = 0
 
 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
-	foreach ($directory in $FolderPath.Split('/')) {
+	foreach ($directory in $sections) {
 		Write-Progress -Activity "Scanning Device Folders" -Status "Processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
 		$nextFolder = $ParentFolder.ParseName($directory)
 
@@ -136,8 +136,9 @@ function Get-MTPFolderByPath {
 
 		# If the folder doesn't already exist, try to create it.
 		if ($null -eq $nextFolder) {
-			if ($ListFiles -or $ScanOnly) {
-				Write-Error "Folder ""$directory"" not found. Exiting." -ErrorAction Stop
+			# If the user is just listing the folder contents, report error and exit.
+			if ($PSBoundParameters.ContainsKey("ListFiles")) {
+				Write-Error "Folder ""$ListFiles"" not found. ""$directory"" does not exist." -ErrorAction Stop
 			}
 
 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
@@ -154,9 +155,9 @@ function Get-MTPFolderByPath {
 					"permissions on the device.") -ErrorAction Stop
 			}
 
-			Write-Host "created."
+			Write-Verbose "Created new directory ""$directory""."
 		}
-		# If the item was found but it isn't a folder, write 
+		# If the item was found but it isn't a folder, write error and stop.
 		elseif (-not $nextFolder.IsFolder) {
 			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""." -ErrorAction Stop
 		}
