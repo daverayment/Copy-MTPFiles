@@ -56,18 +56,30 @@ Use the `FilePatterns` parameter to select only the files you want to transfer. 
 
 The complete list of parameters are below.
 
+## Filename Conflicts
+Files will not be overwritten in the destination. A warning will be raised and the file will be renamed with a non-conflicting suffix. For example:
+
+```powershell
+# Copy the same file twice to the destination.
+.\Copy-MTPFiles.ps1 "." ".\TestFolder" -Patterns "Copy-MTPFiles.ps1"
+.\Copy-MTPFiles.ps1 "." ".\TestFolder" -Patterns "Copy-MTPFiles.ps1"
+
+# Warning shown and listing "TestFolder" now shows these files:
+#     Copy-MTPFiles (1).ps1
+#     Copy-MTPFiles.ps1
+```
+
 ## Parameter Reference
 
 |Parameter|Alias|Description|Example
 |--|--|--|--|
-|SourceDirectory|SourceFolder, Source, s|Sets the path to the source directory. Defaults to the current path if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `.\Copy-MTPFiles.ps1 -Destination "C:\SomeDir"`
+|SourceDirectory|SourceFolder, Source, s|Sets the path to the source directory. Defaults to the current path if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `.\Copy-MTPFiles.ps1 -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
 |DestinationDirectory|DestinationFolder, Destination, d|Sets the path to the destination directory. Defaults to the current path if not specified. Paths may be absolute or relative host paths, or paths on the attached device.|`.\Copy-MTPFiles.ps1 -Source "Internal storage/WhatsApp/Media" -Destination "D:\Phone backup"`
-|ScanOnly|Scan|ScanOnly (Alias: Scan): A switch which controls whether to only scan the source directory and show the matching files, without actually performing any transfers. A more concise alternative to -WhatIf.|`.\Copy-MTPFiles.ps1 -Source "Internal storage/Downloads" -Destination "." -ScanOnly`
 |Move||By default, files are copied. When this parameter is included, files are moved instead.|`.\Copy-MTPFiles.ps1 -Source "Internal storage/DCIM/Camera" -Destination "C:\Users\Me\Pictures" -Move`
 |ListDevices|GetDevices, ld|Lists attached MTP-compatible devices. Use this option to get a name for the `-DeviceName` parameter. If this parameter is present, all other parameters will be ignored.|`.\Copy-MTPFiles.ps1 -ListDevices`
-|DeviceName|Device, dn|Specifies the name of the attached device to use. This parameter must be used if more than one compatible device is attached. Use the `-List` switch to get the names of MTP-compatible devices. Note: there is no need to use `-DeviceName` if only one MTP device is attached.|`.\Copy-MTPFiles.ps1 -Source "C:\Users\Me\Documents" -Destination "Internal storage/Download" -DeviceName "My Phone"`
-|ListFiles|GetFiles, lf, ls|Lists all files in the specified directory. For host directories, this returns a standard PowerShell file listing; for device directories, this returns objects with `Name`, `Length`, `LastWriteTime`, and `Type` properties.|`.\Copy-MTPFiles.ps1 -ListFiles "Internal storage/Download"`
-|FilenamePatterns|Patterns, p|An array of filename patterns to search for. Separate multiple patterns with commas.|`.\Copy-MTPFiles.ps1 -Destination "Internal storage/PC Files" -FilenamePatterns "*.doc", "*.pdf"`
+|DeviceName|Device, dn|Specifies the name of the attached device to use. This parameter must be used if more than one compatible device is attached. Use the `-ListDevices` switch to get the names of MTP-compatible devices. Note: `-DeviceName` is optional if only one MTP device is attached.|`.\Copy-MTPFiles.ps1 -Source "C:\Users\Me\Documents" -Destination "Internal storage/Download" -DeviceName "My Phone"`
+|ListFiles|GetFiles, lf, ls|Lists the contents of the specified directory. For directories on the host PC, this returns a standard PowerShell file listing; for directories on an attached device, this returns objects with `Name`, `Length`, `LastWriteTime`, and `Type` properties. `ListFiles` may be used in combination with `-FilenamePatterns` to filter the listing.|`.\Copy-MTPFiles.ps1 -ListFiles "Internal storage/Download"`
+|FilenamePatterns|Patterns, p|An array of one or more filename patterns to search for. Separate multiple patterns with commas.|`.\Copy-MTPFiles.ps1 -Destination "Internal storage/PC Files" -FilenamePatterns "*.doc", "*.pdf"`
 
 ## Notes
 Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
