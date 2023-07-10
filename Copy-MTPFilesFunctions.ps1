@@ -264,7 +264,7 @@ function New-TemporaryFile {
 	if ($script:Destination.Folder.ParseName($filename))
 	{
 		$newName = Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename
-		Write-Warning "A file with the same name already exists. The source file '$filename' will be transferred as '$newName'."
+		Write-Warning "A file with the same name already exists. The source file ""$filename"" will be transferred as ""$newName""."
 
 		$tempFilePathOld = Join-Path -Path $script:Temp.Directory -ChildPath $filename
 		$tempFilePathNew = Join-Path -Path $script:Temp.Directory -ChildPath $newName
@@ -345,6 +345,9 @@ function Get-FileList {
 	)
 
 	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
+		if (-not (Test-Path -Path $DirectoryPath)) {
+			Write-Error "Directory ""$DirectoryPath"" does not exist." -ErrorAction Stop
+		}
 		$items = Get-ChildItem -Path $DirectoryPath
 		if ($RegexPattern) {
 			$items = $items | Where-Object { $_.Name -match $RegexPattern }
