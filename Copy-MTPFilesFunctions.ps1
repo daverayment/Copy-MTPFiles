@@ -383,11 +383,15 @@ function Format-Item {
 		[System.__ComObject]$Folder
 	)
 
-	New-Object PSObject -Property @{
+	$fileObj = New-Object PSObject -Property @{
 		Type = $Item.Type
-		LastWriteTime = [DateTime]::Parse($Folder.GetDetailsOf($Item, 3))
+		LastWriteTime = "{0:d}    {0:t}" -f [DateTime]::Parse($Folder.GetDetailsOf($Item, 3))
 		Length = $Item.ExtendedProperty("Size")
 		Name = $Item.Name
-		IsFolder = $Item.IsFolder
+#		IsFolder = $Item.IsFolder
 	}
+
+	$fileObj.PSTypeNames.Insert(0, "MTP.File")
+
+	return $fileObj
 }

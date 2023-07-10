@@ -63,6 +63,9 @@ param(
 
 . ./Copy-MTPFilesFunctions.ps1
 
+# Custom format for file listings to keep it reasonably similar to Get-ChildItem.
+Update-FormatData -PrependPath .\MTPFileFormat.ps1xml
+
 Set-StrictMode -Version 2.0
 
 # Create and return a custom object representing the source or destination directory information.
@@ -232,9 +235,7 @@ Set-DeviceInfo
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 if ($PSBoundParameters.ContainsKey("ListFiles")) {
-	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern |
-		Select-Object Type, LastWriteTime, Length, Name |
-		Format-List -AutoSize
+	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
 	return
 }
 
@@ -255,6 +256,7 @@ foreach ($item in $script:Source.Folder.Items()) {
 		}
 		elseif ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
 			Send-SingleFile -FileItem $item
+			Write-Verbose "Transferred file ""$($item.Name)""."
 		}
 	}
 }
