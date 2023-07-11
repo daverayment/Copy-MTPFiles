@@ -34,8 +34,6 @@ jobs:
           
           Update-ModuleManifest -Path .\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yyMM.dd.HH.mm')
           
-          Copy-Item -Path .\MTPFileFormat.ps1xml -Destination .
-          
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v3.1.2
         with:
