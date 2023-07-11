@@ -32,7 +32,7 @@ jobs:
           Get-Content .\Copy-MTPFiles.ps1 | Add-Content -Path Copy-MTPFiles.psm1
           Get-Content .\Copy-MTPFilesFunctions.ps1 | Add-Content -Path Copy-MTPFiles.psm1
           
-          Update-ModuleManifest -Path .\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yy.MM.dd.HH.mm')
+          Update-ModuleManifest -Path .\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yyMM.dd.HH.mm')
           
           Copy-Item -Path .\MTPFileFormat.ps1xml -Destination .
           
