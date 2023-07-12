@@ -24,7 +24,7 @@ GUID = '0c63b38f-b32b-4229-8071-5d47c28adecb'
 Author = 'Dave Rayment'
 
 # Company or vendor of this module
-CompanyName = 'Unknown'
+# CompanyName = ''
 
 # Copyright statement for this module
 Copyright = '(c) Dave Rayment. All rights reserved.'
