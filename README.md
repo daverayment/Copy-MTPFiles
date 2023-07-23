@@ -82,20 +82,20 @@ Relative paths are supported for host machine folders:
 Copy-MTPFiles -Source "..\..\source\AnotherProject" -Destination "..\Documents\ProjectBackup"
 ```
 
-Use the `FilePatterns` parameter to select a subset of files for transfer. You may include more than one pattern, separated by commas. Use the `*` wildcard to match any number of any character, and `?` to match any 1 character:
+Use the `FilePatterns` parameter to select a subset of files for transfer. You may include more than one pattern, separated by commas. Use the `*` wildcard to match any number characters (including zero), and `?` to match exactly one character:
 
 ```powershell
 # Copy images in the current directory to a backup.
 Copy-MTPFiles -Destination "D:\My backup" -FilePatterns "*.jp*g", "*.gif", "*.png", "*.bmp"
 ```
 
-## Filename Conflicts
+## A Note on Filename Conflicts
 Files will not be overwritten in the destination. A warning will be raised and the file will be renamed with a non-conflicting suffix. For example:
 
 ```powershell
 # Copy the same file twice to the destination.
-Copy-MTPFiles -Destination ".\TestFolder" -Patterns "SomeFile.txt"
-Copy-MTPFiles -Destination ".\TestFolder" -Patterns "SomeFile.txt"
+Copy-MTPFiles -Destination ".\TestFolder" -FilePatterns "SomeFile.txt"
+Copy-MTPFiles -Destination ".\TestFolder" -FilePatterns "SomeFile.txt"
 
 # Warning shown and listing "TestFolder" now shows these files:
 #     SomeFile (1).txt
@@ -104,15 +104,15 @@ Copy-MTPFiles -Destination ".\TestFolder" -Patterns "SomeFile.txt"
 
 ## Parameter Reference
 
-|Parameter|Alias|Description|Example
-|--|--|--|--|
-|SourceDirectory|SourceFolder, Source, s|Sets the path to the source directory. Defaults to the current path if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `Copy-MTPFiles -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
-|DestinationDirectory|DestinationFolder, Destination, d|Sets the path to the destination directory. Defaults to the current path if not specified. Paths may be absolute or relative host paths, or paths on the attached device.|`Copy-MTPFiles -Source "Internal storage/WhatsApp/Media" -Destination "D:\Phone backup"`
-|Move||By default, files are copied. When this parameter is included, files are moved instead.|`Copy-MTPFiles -Source "Internal storage/DCIM/Camera" -Destination "C:\Users\Me\Pictures" -Move`
-|ListDevices|GetDevices, ld|Lists attached MTP-compatible devices. Use this option to get a name for the `-DeviceName` parameter. If this parameter is present, all other parameters will be ignored.|`Copy-MTPFiles -ListDevices`
-|DeviceName|Device, dn|Specifies the name of the attached device to use. This parameter must be used if more than one compatible device is attached. Use the `-ListDevices` switch to get the names of MTP-compatible devices. Note: `-DeviceName` is optional if only one MTP device is attached.|`Copy-MTPFiles -Source "C:\Users\Me\Documents" -Destination "Internal storage/Download" -DeviceName "My Phone"`
-|ListFiles|GetFiles, lf, ls|Lists the contents of the specified directory. For directories on the host PC, this returns a standard PowerShell file listing; for directories on an attached device, this returns objects with `Name`, `Length`, `LastWriteTime`, and `Type` properties. `ListFiles` may be used in combination with `-FilenamePatterns` to filter the listing.|`Copy-MTPFiles -ListFiles "Internal storage/Download"`
-|FilenamePatterns|Patterns, p|An array of one or more filename patterns to search for. Separate multiple patterns with commas.|`Copy-MTPFiles -Destination "Internal storage/PC Files" -FilenamePatterns "*.doc", "*.pdf"`
+|Parameter|Aliases|Description|Example
+|--|--|--|--
+|`SourceDirectory`|`SourceFolder`<br/>`Source`<br/>`s`|Sets the path to the source directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `Copy-MTPFiles -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
+|`DestinationDirectory`|`DestinationFolder`<br/>`Destination`<br/>`d`|Sets the path to the destination directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.|`Copy-MTPFiles -Source "Internal storage/WhatsApp/Media" -Destination "D:\Phone backup"`
+|`Move`||When this parameter is included, files are moved instead of copied.|`Copy-MTPFiles -Source "Internal storage/DCIM/Camera" -Destination "C:\Users\Me\Pictures" -Move`
+|`ListDevices`|`GetDevices`<br/>`ld`|Lists attached MTP-compatible devices. Use this option to obtain a device name for use with the `-DeviceName` parameter. If this parameter is present, all other parameters will be ignored.|`Copy-MTPFiles -ListDevices`
+|`DeviceName`|`Device`<br/>`dn`|Specifies the name of the attached device to use. This parameter must be used if more than one compatible device is attached. Use the `-ListDevices` switch to get the names of MTP-compatible devices. Note: `-DeviceName` is optional if only one MTP device is attached.|`Copy-MTPFiles -Source "C:\Users\Me\Documents" -Destination "Internal storage/Download" -DeviceName "My Phone"`
+|`ListFiles`|`GetFiles`<br/>`lf`<br/>`ls`|Lists the contents of the specified directory. For directories on the host PC, this returns a standard PowerShell file listing; for directories on an attached device, this returns objects with `Name`, `Length`, `LastWriteTime`, and `Type` properties. `ListFiles` may be used in combination with `-FilenamePatterns` to filter the listing.|`Copy-MTPFiles -ListFiles "Internal storage/Download"`
+|`FilenamePatterns`|`Patterns`<br/>`p`|An array of one or more filename patterns to search for. Separate multiple patterns with commas.|`Copy-MTPFiles -Destination "Internal storage/PC Files" -FilenamePatterns "*.doc", "*.pdf"`
 
 ## Notes
 Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
