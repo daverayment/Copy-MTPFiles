@@ -26,7 +26,7 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - name: Checkout Repository
-        uses: actions/checkout@v3.5.3
+        uses: actions/checkout@v3
 
       - name: Build Module
         shell: powershell
@@ -37,7 +37,7 @@ jobs:
           Update-ModuleManifest -Path .\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yyMM.dd.HH.mm')
           
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v3.1.2
+        uses: actions/upload-artifact@v3
         with:
           name: Copy-MTPFiles
           path: |
@@ -46,7 +46,7 @@ jobs:
             MTPFileFormat.ps1xml
 
       - name: Download Build Artifact
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: Copy-MTPFiles
           path: ./
