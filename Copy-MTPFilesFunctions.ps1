@@ -1,12 +1,12 @@
 # Retrieve all the MTP-compatible devices.
-function Get-MTPDevices {
+function Get-MTPDevice {
 	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
 }
 
 # Find a matching device and initialise the script-level Device object with its properties.
-function Set-DeviceInfo {
+function Initialize-DeviceInfo {
 	$script:Device = $null
-	$devices = Get-MTPDevices
+	$devices = Get-MTPDevice
 
 	# There must be at least one device. If multiple devices are found, the device name must be supplied.
 	# If the device name is given, it must match, even if only 1 device is present.
@@ -34,6 +34,7 @@ function Test-IsHostDirectory {
 
 # Converts a path to an absolute path, correctly resolving relative paths.
 function Convert-PathToAbsolute {
+	[OutputType("System.String")]
 	[CmdletBinding(SupportsShouldProcess=$true)]
 	param([string]$Path)
 
@@ -83,12 +84,12 @@ function Get-COMFolder {
 					Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
 				}
 				throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
-			}				
+			}
 		}
 		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 	}
 
-	$devices = Get-MTPDevices
+	$devices = Get-MTPDevice
 
 	if (-not $script:Device) {
 		throw "No compatible devices found. Please connect a device in Transfer Files mode."
@@ -98,7 +99,7 @@ function Get-COMFolder {
 	}
 
 	Write-Verbose "Using $($script:Device.Name) ($($script:Device.Type))."
-	
+
 	# Retrieve the root folder of the attached device.
 	$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
 
@@ -164,7 +165,7 @@ function Get-MTPFolderByPath {
 
 		# Continue looping until all subfolders have been navigated.
 		$ParentFolder = $nextFolder.GetFolder
-	
+
 		$folderIndex++
 		Write-Progress -Activity "Scanning Device Folders" -Status "Completed processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
 	}
@@ -228,27 +229,37 @@ function Get-UniqueFilename {
 	return $newName
 }
 
-# Delete any pre-existing temporary directories.
-function Remove-TempDirectories {
-	Get-ChildItem -Path $Env:TEMP -Directory |
-		Where-Object { $_.Name -like "CopyMTPFiles*" } |
-		ForEach-Object { Remove-Item -Path $_.FullName -Recurse -Force }
+# Delete any pre-existing temporary directories we created.
+function Reset-TemporaryDirectory {
+	[CmdletBinding(SupportsShouldProcess=$true)]
+	param()
+
+	if ($PSCmdlet.ShouldProcess("Temporary folders", "Delete")) {
+		Get-ChildItem -Path $Env:TEMP -Directory |
+			Where-Object { $_.Name -like "CopyMTPFiles*" } |
+			ForEach-Object { Remove-Item -Path $_.FullName -Recurse -Force }
+	}
 }
 
 # Create a uniquely-named temporary directory for this run.
 function New-TempDirectory {
+	[CmdletBinding(SupportsShouldProcess=$true)]
+	param()
+
 	$rnd = Get-Random -Maximum 1000	# 0-999
 	$tempDirectoryName = "CopyMTPFiles{0:D3}" -f $rnd
 	$tempDirectoryPath = Join-Path -Path $Env:TEMP -ChildPath $tempDirectoryName
-	New-Item -Path $tempDirectoryPath -ItemType Directory | Out-Null
+	if ($PSCmdlet.ShouldProcess($tempDirectoryPath, "Create temporary directory")) {
+		New-Item -Path $tempDirectoryPath -ItemType Directory | Out-Null
+	}
 
 	$tempDirectoryPath
 }
 
-# Copy the file to be transferred into our temporary folder, renaming it if 
+# Copy the file to be transferred into our temporary folder, renaming it if
 # necessary to ensure there is no name conflict with a file in the destination.
 # If a duplicate is detected, we append a unique numeric suffix.
-function New-TemporaryFile {
+function Copy-SourceFileToTemporaryDirectory {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
@@ -278,6 +289,7 @@ function New-TemporaryFile {
 
 # Remove a file from the host or an attached device, waiting for any activity on it to finish first.
 function Remove-LockedFile {
+	[CmdletBinding(SupportsShouldProcess=$true)]
     param(
         [Parameter(Mandatory=$true)]
         [System.__ComObject]$FileItem,
@@ -289,50 +301,52 @@ function Remove-LockedFile {
         [int]$TimeoutSeconds = 5 * 60
     )
 
-	Write-Debug "Removing file '$($FileItem.Path)'..."
+	if ($PSCmdlet.ShouldProcess($FileItem.Path, "Remove file")) {
+		Write-Debug "Removing file '$($FileItem.Path)'..."
 
-    $start = Get-Date
+		$start = Get-Date
 
-	# First wait for the file to start transferring.
-	$file = $script:Destination.Folder.ParseName($FileItem.Name)
-	while ($null -eq $file) {
-		Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
-
-		if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
-			throw "Removal of file '$($FileItem.Path)' timed out."
-		}
-
-		Start-Sleep -Milliseconds 500
-		
+		# First wait for the file to start transferring.
 		$file = $script:Destination.Folder.ParseName($FileItem.Name)
-		# TODO: timeout
-	}
-
-    do {
-		try {
-			if ($IsOnHost) {
-				Remove-Item $FileItem.Path
-			}
-			else {
-				$Folder.Delete($FileItem.Name)
-			}
-
-			$locked = $false
-		}
-		catch {
-			# If we catch an exception, the file is locked.
-			Write-Debug "File '$($FileItem.Path)' is locked."
-			$locked = $true
+		while ($null -eq $file) {
+			Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
 
 			if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
 				throw "Removal of file '$($FileItem.Path)' timed out."
 			}
 
 			Start-Sleep -Milliseconds 500
-		}
-	} while ($locked)
 
-	Write-Debug "File '$($FileItem.Path)' removed."
+			$file = $script:Destination.Folder.ParseName($FileItem.Name)
+			# TODO: timeout
+		}
+
+		do {
+			try {
+				if ($IsOnHost) {
+					Remove-Item $FileItem.Path
+				}
+				else {
+					$Folder.Delete($FileItem.Name)
+				}
+
+				$locked = $false
+			}
+			catch {
+				# If we catch an exception, the file is locked.
+				Write-Debug "File '$($FileItem.Path)' is locked."
+				$locked = $true
+
+				if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
+					throw "Removal of file '$($FileItem.Path)' timed out."
+				}
+
+				Start-Sleep -Milliseconds 500
+			}
+		} while ($locked)
+
+		Write-Debug "File '$($FileItem.Path)' removed."
+	}
 }
 
 function Get-FileList {
@@ -364,7 +378,7 @@ function Get-FileList {
 	# 		Write-Output "$_ > $propertyName : $propertyValue"
 	# 	}
 	# }
-	
+
 	foreach ($item in $folder.Items()) {
 		if ($RegexPattern -and -not ($item.Name -match $RegexPattern)) {
 			continue

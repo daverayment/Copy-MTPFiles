@@ -16,7 +16,7 @@
 	Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
 .EXAMPLE
 	Move files with a .doc or .pdf extension from the Download directory on the device to a specified directory on the host:
-	
+
 	.\Copy-MTPFiles.ps1 -Move -Source "Internal storage/Download" -Destination "C:\Projects\Documents" -Patterns "*.doc", "*.pdf"
 .EXAMPLE
 	Copy files with a .jpg extension from the Download directory on the device to the current folder:
@@ -71,7 +71,7 @@ Set-StrictMode -Version 2.0
 # Create and return a custom object representing the source or destination directory information.
 function Set-TransferObject {
 	[CmdletBinding(SupportsShouldProcess)]
-	param([string]$Directory, [string]$ParameterName, [bool]$IsSource)
+	param([string]$Directory, [bool]$IsSource)
 
 	$Directory = $Directory.TrimEnd('/').TrimEnd('\\')
 
@@ -95,7 +95,7 @@ function Set-TransferObject {
 }
 
 # Check script parameters and setup script-level variables for source, destination and temporary directories.
-function Set-TransferDirectories {
+function Initialize-TransferEnvironment {
 	$script:Source = Set-TransferObject -Directory $SourceDirectory -ParameterName "SourceDirectory" -IsSource:$true
 	$script:Destination = Set-TransferObject -Directory $DestinationDirectory -ParameterName "DestinationDirectory"
 
@@ -134,9 +134,7 @@ function Get-ShellApplication {
 function Send-SingleFile {
 	param(
 		[Parameter(Mandatory = $true)]
-		[System.__ComObject]$FileItem,
-
-		[int]$TotalFiles = -1
+		[System.__ComObject]$FileItem
 	)
 
 	$filename = $FileItem.Name
@@ -165,19 +163,19 @@ function Send-SingleFile {
 	}
 	else {
 		# MTP transfer using our temporary directory as a working area.
-		$tempFile = New-TemporaryFile -FileItem $FileItem
+		$tempFile = Copy-SourceFileToTemporaryDirectory -FileItem $FileItem
 		$script:Destination.Folder.CopyHere($tempFile)
 		$script:Temp.LastFileItem = $tempFile
 		if ($Move) {
 			$script:SourceFilesToDelete.Enqueue($FileItem)
 		}
 
-		Clear-WorkingFiles
+		Clear-WorkingEnvironment
 	}
 }
 
 # Clear all but the most recent file from the temporary directory. Also remove source files if this is a Move.
-function Clear-WorkingFiles {
+function Clear-WorkingEnvironment {
 	param([switch]$Wait)
 
 	foreach ($file in Get-ChildItem ($script:Temp.Directory)) {
@@ -221,7 +219,7 @@ function Clear-WorkingFiles {
 $script:ShellApp = $null
 
 if ($ListDevices) {
-	Get-MTPDevices | ForEach-Object {
+	Get-MTPDevice | ForEach-Object {
 		[PSCustomObject]@{
 			Name = $_.Name
 			Type = $_.Type
@@ -230,7 +228,7 @@ if ($ListDevices) {
 	return
 }
 
-Set-DeviceInfo
+Initialize-DeviceInfo
 
 $regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
@@ -239,11 +237,9 @@ if ($PSBoundParameters.ContainsKey("ListFiles")) {
 	return
 }
 
-if ($PSCmdlet.ShouldProcess("Temporary folders", "Delete")) {
-	Remove-TempDirectories
-}
+Reset-TemporaryDirectory
 
-Set-TransferDirectories
+Initialize-TransferEnvironment
 
 $script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
@@ -268,6 +264,6 @@ if (-not $ScanOnly) {
 	if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
 		Clear-WorkingFiles -Wait
 	}
-	
+
 	Write-Output "$i file(s) transferred."
 }
