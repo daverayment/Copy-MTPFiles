@@ -144,16 +144,16 @@ function Send-SingleFile {
 	if ($script:Source.OnHost -and $script:Destination.OnHost) {
 		# Use Powershell for transfers.
 		try {
-			$destinationUnique = Join-Path -Path $script:Destination.Directory -ChildPath (Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename)
-			if ($destinationUnique -ne $FileItem.Path) {
-				$newFilename = [System.IO.Path]::GetFilename($destinationUnique)
-				Write-Warning "A file with the same name already exists. The source file ""$($FileItem.Name)"" will be transferred as ""$newFilename""."
+			$uniqueFilename = Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename
+			$destinationPath = Join-Path -Path $script:Destination.Directory -ChildPath $uniqueFilename
+			if (-not ($uniqueFilename -ieq $filename)) {
+				Write-Warning "A file with the same name already exists. The source file ""$($filename)"" will be transferred as ""$uniqueFilename""."
 			}
 			if ($Move) {
-				Move-Item -Path $FileItem.Path -Destination $destinationUnique -Confirm:$false
+				Move-Item -Path $FileItem.Path -Destination $destinationPath -Confirm:$false
 			}
 			else {
-				Copy-Item -Path $FileItem.Path -Destination $destinationUnique -Confirm:$false
+				Copy-Item -Path $FileItem.Path -Destination $destinationPath -Confirm:$false
 			}
 		}
 		catch {
