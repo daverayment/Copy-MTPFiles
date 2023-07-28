@@ -96,8 +96,8 @@ function Set-TransferObject {
 
 # Check script parameters and setup script-level variables for source, destination and temporary directories.
 function Initialize-TransferEnvironment {
-	$script:Source = Set-TransferObject -Directory $SourceDirectory -ParameterName "SourceDirectory" -IsSource:$true
-	$script:Destination = Set-TransferObject -Directory $DestinationDirectory -ParameterName "DestinationDirectory"
+	$script:Source = Set-TransferObject -Directory $SourceDirectory -IsSource:$true
+	$script:Destination = Set-TransferObject -Directory $DestinationDirectory
 
 	Write-Output "`nSource directory: ""$($script:Source.Directory)""", "Destination directory: ""$($script:Destination.Directory)""`n"
 
