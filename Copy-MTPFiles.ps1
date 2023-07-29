@@ -5,6 +5,7 @@
 	The script accepts the following parameters:
 	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
 	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
+	- ScanOnly (Alias: Scan): A switch for showing the matching files in the source directory without transferring them. Useful for debugging.
 	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
