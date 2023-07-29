@@ -1,13 +1,23 @@
 # Copy-MTPFiles
-
 This PowerShell script allows you to transfer files to or from a portable device using MTP - the Media Transfer Protocol. MTP is a widely supported standard for transferring files over USB, particularly for media devices like phones, tablets, cameras and digital audio players. The script also supports the listing of folder contents on both the host and the device.
 
-## Prerequisites
+![Build badge](https://img.shields.io/github/actions/workflow/status/daverayment/copy-mtpfiles/build-and-upload.yml?logo=github)
 
+## Table of Contents
+- [Introduction](#copy-mtpfiles)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [A Note on Filename Conflicts](#a-note-on-filename-conflicts)
+- [Parameter Reference](#parameter-reference)
+- [Notes](#notes)
+- [Contributions](#contributions)
+- [License](#license)
+
+## Prerequisites
 The script relies on COM and so only works on Windows machines. PowerShell 5.1 (included in Windows 10) or later is required to run the script. It may work on earlier versions, but has not been tested on them.
 
 ## Installation
-
 To install the `Copy-MTPFiles` PowerShell module, follow these steps:
 
 1. Download the latest ZIP archive of the module from the [Releases](https://github.com/daverayment/Copy-MTPFiles/releases) page.
@@ -41,7 +51,6 @@ Import-Module Copy-MTPFiles
 If this command does not produce any errors, the module has been installed correctly and is ready to use.
 
 ## Quick Start
-
 By default the script copies all files in the source folder to the destination folder. This is not a recursive copy operation; child folders and their contents are ignored.
 
 ```powershell
@@ -82,7 +91,9 @@ Relative paths are supported for host machine folders:
 Copy-MTPFiles -Source "..\..\source\AnotherProject" -Destination "..\Documents\ProjectBackup"
 ```
 
-Use the `FilePatterns` parameter to select a subset of files for transfer. You may include more than one pattern, separated by commas. Use the `*` wildcard to match any number characters (including zero), and `?` to match exactly one character:
+Use the `FilePatterns` parameter to select a subset of files for transfer. You may include more than one pattern, separated by commas. Use the `*` wildcard to match any number of any character (including no matches), and `?` to match exactly one occurrence of any character.
+
+For instance, in the following example, `*.jp*g` matches `apic.jpg`, `pic.jpeg`, `picture.jppppg`, `.jpg` and so on:
 
 ```powershell
 # Copy images in the current directory to a backup.
@@ -90,7 +101,7 @@ Copy-MTPFiles -Destination "D:\My backup" -FilePatterns "*.jp*g", "*.gif", "*.pn
 ```
 
 ## A Note on Filename Conflicts
-Files will not be overwritten in the destination. A warning will be raised and the file will be renamed with a non-conflicting suffix. For example:
+Files will *not* be overwritten in the destination. A warning will be raised and the file will be renamed with a non-conflicting suffix. For example:
 
 ```powershell
 # Copy the same file twice to the destination.
@@ -103,7 +114,6 @@ Copy-MTPFiles -Destination ".\TestFolder" -FilePatterns "SomeFile.txt"
 ```
 
 ## Parameter Reference
-
 |Parameter|Aliases|Description|Example
 |--|--|--|--
 |`SourceDirectory`|`SourceFolder`<br/>`Source`<br/>`s`|Sets the path to the source directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `Copy-MTPFiles -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
@@ -116,3 +126,21 @@ Copy-MTPFiles -Destination ".\TestFolder" -FilePatterns "SomeFile.txt"
 
 ## Notes
 Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
+
+## Contributions
+Contributions to `Copy-MTPFiles` are very welcome! Here are ways to contribute:
+
+- **Raise an issue:** If you find a bug, have a feature request, or even have a question about using the module, please [raise an issue](https://github.com/daverayment/copy-mtpfiles/issues) on the GitHub repo. This helps to track the discussion and resolution of your request. 
+
+- **Submit a Pull Request:** If you have a fix or improvement, and are willing to contribute it back, I'd love to incorporate it! Please first [raise an issue](https://github.com/daverayment/copy-mtpfiles/issues) as described above. This prevents duplication of effort and allows others to discuss the potential change.
+
+Before you submit your Pull Request, please ensure the following:
+
+1. Your code is well commented and adheres to the PowerShell [best practice guidelines](https://docs.microsoft.com/powershell/scripting/developer/cmdlet/best-practices-for-cmdlet-development).
+2. Your changes have been thoroughly tested.
+3. You have updated any relevant documentation, including adding comments in your code and potentially updating the [README](https://github.com/daverayment/Copy-MTPFiles/blob/main/README.md) or other documents.
+
+Thank you for your help!
+
+## License
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
