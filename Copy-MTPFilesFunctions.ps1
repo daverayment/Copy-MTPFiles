@@ -69,21 +69,33 @@ function Get-COMFolder {
 		[bool]$IsSource
 	)
 
+	$maxAttempts = 3
+	$currentAttempts = 0
+	$retryDelay = 2		# seconds!
+
 	if (-not $IsSource -and -not $PSCmdlet.ShouldProcess($DirectoryPath, "Get folder")) {
 		return $null
 	}
 
 	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
 		if (-not (Test-Path -Path $DirectoryPath)) {
-			try {
-				New-Item -Type Directory -Path $DirectoryPath -Force | Out-Null
-			}
-			catch {
-				Write-Error "Failed to create directory ""$DirectoryPath"". Exception: $($_.Exception.Message)"
-				if ($_.Exception.InnerException) {
-					Write-Error "Inner Exception: $($_.Exception.InnerException.Message)"
+			do {
+				try {
+					New-Item -Type Directory -Path $DirectoryPath -Force | Out-Null
+
+					break	# break out of the retry loop
 				}
-				throw "Could not create directory ""$DirectoryPath"". Please check you have adequate permissions."
+				catch {
+					$currentAttempts++
+
+					Write-Error "Failed to create directory ""$DirectoryPath"". $numRetries retries left." -Category InvalidOperation -TargetObject $DirectoryPath -ErrorVariable folderError
+
+					Start-Sleep -Seconds $retryDelay
+				}	
+			} while ($currentAttempts -lt $maxAttempts)
+
+			if ($currentAttempts -eq $numAttempts) {
+				throw "Could not create directory ""$DirectoryPath"" after $maxAttempts attempts. Please check you have adequate permissions."
 			}
 		}
 		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
