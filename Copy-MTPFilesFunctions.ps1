@@ -70,8 +70,8 @@ function Get-COMFolder {
 	)
 
 	$maxAttempts = 3
-	$currentAttempts = 0
-	$retryDelay = 2		# seconds!
+	$currentAttempt = 1
+	$retryDelay = 2		# seconds
 
 	if (-not $IsSource -and -not $PSCmdlet.ShouldProcess($DirectoryPath, "Get folder")) {
 		return $null
@@ -86,15 +86,15 @@ function Get-COMFolder {
 					break	# break out of the retry loop
 				}
 				catch {
-					$currentAttempts++
+					$currentAttempt++
 
 					Write-Error "Failed to create directory ""$DirectoryPath"". $numRetries retries left." -Category InvalidOperation -TargetObject $DirectoryPath -ErrorVariable folderError
 
 					Start-Sleep -Seconds $retryDelay
 				}	
-			} while ($currentAttempts -lt $maxAttempts)
+			} while ($currentAttempt -lt $maxAttempts)
 
-			if ($currentAttempts -eq $numAttempts) {
+			if ($currentAttempt -eq $numAttempts) {
 				throw "Could not create directory ""$DirectoryPath"" after $maxAttempts attempts. Please check you have adequate permissions."
 			}
 		}
