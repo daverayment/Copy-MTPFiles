@@ -115,7 +115,7 @@ function Get-COMFolder {
 	# Retrieve the root folder of the attached device.
 	$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
 
-	# Return a reference to the requested path on the device. Creates folders if required.
+	# Return a reference to the requested path on the device. Creates folders if required (if the user is not just requesting to list files)
 	return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
 }
 
@@ -144,14 +144,14 @@ function Get-MTPFolderByPath {
 
 		# The source folder must exist.
 		if ($IsSource -and $null -eq $nextFolder) {
-			Write-Error "Source directory ""$directory"" not found." -ErrorAction Stop
+			Write-Error "Source directory ""$directory"" not found." -Category ObjectNotFound -TargetObject $directory -ErrorVariable sourceNotFound -ErrorAction Stop -RecommendedAction "Check the provided source directory path for errors and try again."
 		}
 
 		# If the folder doesn't already exist, try to create it.
 		if ($null -eq $nextFolder) {
 			# If the user is just listing the folder contents, report error and exit.
-			if ($PSBoundParameters.ContainsKey("ListFiles")) {
-				Write-Error "Folder ""$ListFiles"" not found. ""$directory"" does not exist." -ErrorAction Stop
+			if ($ListFiles) {
+				Write-Error "Folder ""$directory"" not found." -Category ObjectNotFound -TargetObject $directory -ErrorVariable folderNotFound -ErrorAction Stop -RecommendedAction "Please verify the folder path and try again."
 			}
 
 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
