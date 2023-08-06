@@ -5,7 +5,6 @@
 	The script accepts the following parameters:
 	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
 	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
-	- ScanOnly (Alias: Scan): A switch for showing the matching files in the source directory without transferring them. Useful for debugging.
 	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
 	- Move: A switch which, when included, moves files instead of the default of copying them.
 	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
@@ -43,9 +42,6 @@ param(
 	[ValidateNotNullOrEmpty()]
 	[Parameter(Position = 1)]
 	[string]$DestinationDirectory = $PWD.Path,
-
-	[Alias("Scan")]
-	[switch]$ScanOnly,
 
 	[switch]$Move,
 
@@ -219,52 +215,62 @@ function Clear-WorkingEnvironment {
 # Main script start.
 $script:ShellApp = $null
 
-if ($ListDevices) {
-	Get-MTPDevice | ForEach-Object {
-		[PSCustomObject]@{
-			Name = $_.Name
-			Type = $_.Type
+try {
+	if ($ListDevices) {
+		Get-MTPDevice | ForEach-Object {
+			[PSCustomObject]@{
+				Name = $_.Name
+				Type = $_.Type
+			}
+		}
+		return
+	}
+
+	Initialize-DeviceInfo
+
+	$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
+
+	if ($PSBoundParameters.ContainsKey("ListFiles")) {
+		Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
+		return
+	}
+
+	Reset-TemporaryDirectory
+
+	Initialize-TransferEnvironment
+
+	$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
+
+	$i = 0
+	foreach ($item in $script:Source.Folder.Items()) {
+		if ($item.Name -match $regexPattern) {
+			$i++
+			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+				Send-SingleFile -FileItem $item
+				Write-Verbose "Transferred file ""$($item.Name)""."
+			}
 		}
 	}
-	return
-}
-
-Initialize-DeviceInfo
-
-$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
-
-if ($PSBoundParameters.ContainsKey("ListFiles")) {
-	Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
-	return
-}
-
-Reset-TemporaryDirectory
-
-Initialize-TransferEnvironment
-
-$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
-
-$i = 0
-foreach ($item in $script:Source.Folder.Items()) {
-	if ($item.Name -match $regexPattern) {
-		$i++
-		if ($ScanOnly) {
-			Format-Item $item $script:Source.Folder | Select-Object Type, LastWriteTime, Length, Name
-		}
-		elseif ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-			Send-SingleFile -FileItem $item
-			Write-Verbose "Transferred file ""$($item.Name)""."
-		}
+	if ($i -eq 0) {
+		Write-Output "No matching files found."
 	}
-}
-if ($i -eq 0) {
-	Write-Output "No matching files found."
-}
+	else {
+		Write-Output "$i file(s) transferred."
+	}
 
-if (-not $ScanOnly) {
 	if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
-		Clear-WorkingFiles -Wait
+		Clear-WorkingEnvironment -Wait
 	}
+}
+catch {
+	$ex = $_.Exception
 
-	Write-Output "$i file(s) transferred."
+	$ex | Out-File -FilePath .\ErrorLog.txt -Append
+
+	if ($Host.Name -eq "ConsoleHost") {
+		Write-Error "Exception: $($_.Exception.Message)"
+	}
+	else {
+		throw $ex
+	}
 }
