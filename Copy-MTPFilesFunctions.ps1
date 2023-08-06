@@ -66,7 +66,9 @@ function Get-COMFolder {
 		[ValidateNotNullOrEmpty()]
 		[string]$DirectoryPath,
 
-		[bool]$IsSource
+		[bool]$IsSource,
+
+		[switch]$IsFileListing
 	)
 
 	$maxAttempts = 3
@@ -107,7 +109,8 @@ function Get-COMFolder {
 		throw "No compatible devices found. Please connect a device in Transfer Files mode."
 	}
 	elseif ($devices.Count -gt 1 -and -not $DeviceName) {
-		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the device to use. Use the '-ListDevices' switch to list connected compatible devices."
+		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the " +
+			"device to use. Use the '-ListDevices' switch to list connected compatible devices."
 	}
 
 	Write-Verbose "Using $($script:Device.Name) ($($script:Device.Type))."
@@ -117,6 +120,7 @@ function Get-COMFolder {
 
 	# Return a reference to the requested path on the device. Creates folders if required (if the user is not just requesting to list files)
 	return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
+		-IsFileListing:$IsFileListing
 }
 
 # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
@@ -144,19 +148,22 @@ function Get-MTPFolderByPath {
 
 		# The source folder must exist.
 		if ($IsSource -and $null -eq $nextFolder) {
-			Write-Error "Source directory ""$directory"" not found." -Category ObjectNotFound -TargetObject $directory -ErrorVariable sourceNotFound -ErrorAction Stop -RecommendedAction "Check the provided source directory path for errors and try again."
+			Write-Error ("Source directory ""$directory"" not found. Check the provided source directory path " +
+				"for errors and try again.") -Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
 		}
 
 		# If the folder doesn't already exist, try to create it.
 		if ($null -eq $nextFolder) {
 			# If the user is just listing the folder contents, report error and exit.
 			if ($ListFiles) {
-				Write-Error "Folder ""$directory"" not found." -Category ObjectNotFound -TargetObject $directory -ErrorVariable folderNotFound -ErrorAction Stop -RecommendedAction "Please verify the folder path and try again."
+				Write-Error "Folder ""$directory"" not found. Please verify the folder path and try again."
+					-Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
 			}
 
 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
-				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting." -ErrorAction Stop
+				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting."
+					-TargetObject $directory -ErrorAction Stop
 			}
 
 			$ParentFolder.NewFolder($directory)
@@ -165,14 +172,15 @@ function Get-MTPFolderByPath {
 			# If creation failed, write error and stop.
 			if ($null -eq $nextFolder) {
 				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
-					"permissions on the device.") -ErrorAction Stop
+					"permissions on the device.") -Category PermissionDenied -TargetObject $directory -ErrorAction Stop
 			}
 
 			Write-Verbose "Created new directory ""$directory""."
 		}
 		# If the item was found but it isn't a folder, write error and stop.
 		elseif (-not $nextFolder.IsFolder) {
-			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""." -ErrorAction Stop
+			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
+				-Category WriteError -TargetObject $directory -ErrorAction Stop
 		}
 
 		# Continue looping until all subfolders have been navigated.
@@ -350,6 +358,7 @@ function Remove-LockedFile {
 				$locked = $true
 
 				if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
+					# TODO: Write-Error and break instead of throwing?
 					throw "Removal of file '$($FileItem.Path)' timed out."
 				}
 
@@ -381,7 +390,7 @@ function Get-FileList {
 		return $items
 	}
 
-	$folder = Get-COMFolder -DirectoryPath $DirectoryPath
+	$folder = Get-COMFolder -DirectoryPath $DirectoryPath -IsFileListing
 
 	# 0..287 | Foreach-Object {
 	# 	$propertyValue = $folder.GetDetailsOf($item, $_)
