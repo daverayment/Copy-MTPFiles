@@ -97,7 +97,12 @@ function Initialize-TransferEnvironment {
 	$script:Source = Set-TransferObject -Directory $SourceDirectory -IsSource:$true
 	$script:Destination = Set-TransferObject -Directory $DestinationDirectory
 
-	Write-Output "`nSource directory: ""$($script:Source.Directory)""", "Destination directory: ""$($script:Destination.Directory)""`n"
+	Write-Output ([PSCustomObject]@{
+		Source = $script:Source.Directory
+		SourceOnHost = $script:Source.OnHost
+		Destination = $script:Destination.Directory
+		DestinationOnHost = $script:Destination.OnHost
+	}) | Format-List
 
 	if ($script:Source.Directory -ieq $script:Destination.Directory) {
 		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop
@@ -288,16 +293,26 @@ try {
 	if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
 		Clear-WorkingEnvironment -Wait
 	}
+
+	$movedCopiedInitCap = $script:MovedCopied.Substring(0, 1).ToUpper() + $script:MovedCopied.Substring(1);
+
+	return [PSCustomObject]@{
+		Status = "Success"
+		Message = "$movedCopiedInitCap files."
+		FilesMatched = $numMatches
+		FilesTransferred = $numTransfers
+	} | Format-List
 }
 catch {
-	$ex = $_.Exception
+	$_.Exception | Out-File -FilePath ".\Error.log" -Append
 
-	$ex | Out-File -FilePath .\ErrorLog.txt -Append
+	Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
 
-	if ($Host.Name -eq "ConsoleHost") {
-		Write-Error "Exception: $($_.Exception.Message)"
-	}
-	else {
-		throw $ex
-	}
+	return [PSCustomObject]@{
+		Status = "Failure"
+		Message = $_.Exception.Message
+		ErrorCategory = $_.CategoryInfo.Category
+		FilesMatched = if (Test-Path variable:numMatches) { $numMatches } else { 0 }
+		FilesTransferred = if (Test-Path variable:numTransfers) { $numTransfers } else { 0 }
+	} | Format-List
 }
