@@ -42,7 +42,7 @@ function Convert-PathToAbsolute {
 	else {
 		return (Resolve-Path -Path (Join-Path -Path $PWD.Path -ChildPath $Path)).Path
 	}
-		}
+}
 
 # Create a path if it does not exist.
 function Test-DirectoryExists {
@@ -86,9 +86,11 @@ function Get-COMFolder {
 					break	# break out of the retry loop
 				}
 				catch {
+					$retriesLeft = $maxAttempts - $currentAttempt
+					Write-Error "Failed to create directory ""$DirectoryPath"". " +
+						"$retriesLeft retr$(if ($retriesLeft -eq 1) { "y" } else { "ies" }) left."
+						-Category InvalidOperation -TargetObject $DirectoryPath -ErrorVariable folderError
 					$currentAttempt++
-
-					Write-Error "Failed to create directory ""$DirectoryPath"". $numRetries retries left." -Category InvalidOperation -TargetObject $DirectoryPath -ErrorVariable folderError
 
 					Start-Sleep -Seconds $retryDelay
 				}	
@@ -330,13 +332,17 @@ function Remove-LockedFile {
 			Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
 
 			if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
-				throw "Removal of file '$($FileItem.Path)' timed out."
+				Write-Error "Removal of file '$($FileItem.Path)' timed out after $TimeoutSeconds seconds."
+					-Category ResourceUnavailable -ErrorAction Inquire
+
+				# The user has chosen to wait for another timeout period to elapse.
+				# (In non-interactive sessions, the script will have exited.)
+				$start = Get-Date
 			}
 
 			Start-Sleep -Milliseconds 500
 
 			$file = $script:Destination.Folder.ParseName($FileItem.Name)
-			# TODO: timeout
 		}
 
 		do {
@@ -356,8 +362,11 @@ function Remove-LockedFile {
 				$locked = $true
 
 				if (((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
-					# TODO: Write-Error and break instead of throwing?
-					throw "Removal of file '$($FileItem.Path)' timed out."
+					Write-Error -Message "Removal of file '$($FileItem.Path)' timed out after $TimeoutSeconds seconds."
+						-Category ResourceUnavailable -ErrorAction Inquire
+
+					# User chose to continue waiting.
+					$start = Get-Date
 				}
 
 				Start-Sleep -Milliseconds 500
