@@ -242,21 +242,47 @@ try {
 
 	$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
-	$i = 0
-	foreach ($item in $script:Source.Folder.Items()) {
-		if ($item.Name -match $regexPattern) {
-			$i++
-			if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
-				Send-SingleFile -FileItem $item
-				Write-Verbose "Transferred file ""$($item.Name)""."
+	# Number of matches found.
+	$numMatches = 0
+	# Number of matched files transferred.
+	$numTransfers = 0
+
+	# A script block to process a single item.
+	$processItem = {
+		param ([System.__ComObject]$item)
+
+		$script:numMatches++
+		if ($PSCmdlet.ShouldProcess($item.Name, "Transfer")) {
+			Send-SingleFile -FileItem $item
+			Write-Verbose "Transferred file ""$($item.Name)""."
+			$script:numTransfers++
+		}
+	}
+
+	# Determine the matching files and transfer them.
+	if ($script:Source.OnHost) {
+		# It is slow to iterate over all the files with COM, so use a hybrid approach.
+		Get-ChildItem -Path $script:Source.Directory -File |
+			Where-Object { $_.Name -match $regexPattern } |
+			ForEach-Object {
+				$comFileItem = $script:Source.Folder.ParseName($_.Name)
+				& $processItem $comFileItem
+			}
+	}
+	else {
+		# When using MTP, we have no alternative but to iterate over all the files.
+		foreach ($item in $script:Source.Folder.Items()) {
+			if ($item.Name -match $regexPattern) {
+				& $processItem $item
 			}
 		}
 	}
-	if ($i -eq 0) {
-		Write-Output "No matching files found."
+
+	if ($numMatches -eq 0) {
+		Write-Host "No matching files found."
 	}
 	else {
-		Write-Output "$i file(s) transferred."
+		Write-Host "$numMatches matching file(s) found. $numTransfers file(s) transferred."
 	}
 
 	if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
