@@ -32,27 +32,25 @@ function Test-IsHostDirectory {
 	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath) -or $DirectoryPath.Contains('\')
 }
 
-# Converts a path to an absolute path, correctly resolving relative paths.
+# Converts a host path to an absolute path, correctly resolving relative paths.
 function Convert-PathToAbsolute {
-	[OutputType("System.String")]
-	[CmdletBinding(SupportsShouldProcess=$true)]
 	param([string]$Path)
 
 	if ([System.IO.Path]::IsPathRooted($Path)) {
 		return $Path
 	}
 	else {
-		$absPath = Join-Path -Path $PWD.Path -ChildPath $Path
-		if (-not (Test-Path $absPath) -and $PSCmdlet.ShouldProcess($absPath, "Create directory")) {
-			New-Item -ItemType Directory -Path $absPath -Force | Out-Null
+		return (Resolve-Path -Path (Join-Path -Path $PWD.Path -ChildPath $Path)).Path
+	}
 		}
 
-		if (Test-Path $absPath) {
-			return (Resolve-Path -Path $absPath).Path
-		}
-		else {
-			return $absPath
-		}
+# Create a path if it does not exist.
+function Test-DirectoryExists {
+	[CmdletBinding(SupportsShouldProcess=$true)]
+	param([string]$Path)
+
+	if (-not (Test-Path -Path $Path) -and $PSCmdlet.ShouldProcess($Path, "Create directory")) {
+		New-Item -ItemType Directory -Path $Path -Force | Out-Null
 	}
 }
 

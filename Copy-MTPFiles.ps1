@@ -74,6 +74,7 @@ function Set-TransferObject {
 
 	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
 	if ($OnHost) {
+		Test-DirectoryExists -Path $Directory
 		$Directory = Convert-PathToAbsolute -Path $Directory
 	}
 
