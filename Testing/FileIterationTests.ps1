@@ -4,27 +4,8 @@
 # 5 benchmark runs for each method. The first of those is removed from the stats, along with any outliers.
 # Quick and dirty experiment. Not production code.
 
-# Prepare the COM shell.
-$shellApp = New-Object -ComObject Shell.Application
-if ($null -eq $shellApp) {
-    Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop
-}
-
-# Set the directory path and regular expression pattern.
-$directoryPath = Join-Path -Path $PWD.Path -ChildPath "DirectoryPath"
-$options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
-$regexPattern = New-Object System.Text.RegularExpressions.Regex ("test[0-9]+\.txt", $options)  # Example pattern to match 'test<number>.txt'.
-# COM object for the COM iteration test.
-$folder = $shellApp.NameSpace($directoryPath)
-
 # Prepare the test directory.
 function SetupTestDirectory {
-    # Clear any previous runs' data if it is still present.
-    Clear-TestDirectory
-
-    # Create the test directory.
-    New-Item -Path $directoryPath -ItemType Directory | Out-Null
-
     # Populate the test directory with test files.
     1..10000 | ForEach-Object {
         # Create some files that match the regular expression and some that don't.
@@ -93,18 +74,60 @@ function Benchmark($approach, $runs = 5) {
     $times | Measure-Object -Average | Select-Object -ExpandProperty Average
 }
 
-# Prepare the test directory.
-SetupTestDirectory
+try {
+    # Prepare the COM shell.
+    $shellApp = New-Object -ComObject Shell.Application
+    if ($null -eq $shellApp) {
+        Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop
+    }
 
-# Perform the benchmarks.
-$COMAverage = Benchmark COMApproach
-$ChildItemAverage = Benchmark ChildItemApproach
-$HybridAverage = Benchmark HybridApproach
+    # Set the directory path and regular expression pattern.
+    $testPath = Split-Path $MyInvocation.MyCommand.Path
+    $directoryPath = Join-Path -Path $testPath -ChildPath "DirectoryPath"
+    $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
+    $regexPattern = New-Object System.Text.RegularExpressions.Regex ("test[0-9]+\.txt", $options)  # Example pattern to match 'test<number>.txt'.
 
-# Print the results.
-Write-Output "COM approach took an average of $COMAverage milliseconds."
-Write-Output "Get-ChildItem approach took an average of $ChildItemAverage milliseconds."
-Write-Output "Hybrid approach took an average of $HybridAverage milliseconds."
+    Write-Host "Creating files in `"$directoryPath`"..."
 
-# Cleanup.
-Clear-TestDirectory
+    # Clear any previous runs' data if it is still present.
+    Clear-TestDirectory
+        
+    # Create the test directory.
+    New-Item -Path $directoryPath -ItemType Directory | Out-Null
+    
+    # COM object for the COM iteration test.
+    $folder = $shellApp.NameSpace($directoryPath)
+    if ($null -eq $folder) {
+        Write-Error "Failed to create a COM Folder object." -ErrorAction Stop
+    }
+
+    # Prepare the test directory.
+    SetupTestDirectory
+
+    # Perform the benchmarks.
+    $COMAverage = Benchmark COMApproach
+    $ChildItemAverage = Benchmark ChildItemApproach
+    $HybridAverage = Benchmark HybridApproach
+
+    # Print the results.
+    Write-Output "COM approach took an average of $COMAverage milliseconds."
+    Write-Output "Get-ChildItem approach took an average of $ChildItemAverage milliseconds."
+    Write-Output "Hybrid approach took an average of $HybridAverage milliseconds."
+}
+finally {
+    Clear-TestDirectory
+
+    # Release the folder object.
+    if ($null -ne $folder) {
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($folder) | Out-Null
+    }
+
+    # Release the shell object.
+    if ($null -ne $shellApp) {
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shellApp) | Out-Null
+    }
+
+    # Force a garbage collection to clean up any remaining COM references.
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}
