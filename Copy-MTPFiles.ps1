@@ -1,36 +1,52 @@
 <#
 .SYNOPSIS
-	This script transfers files to or from a portable device via MTP - the Media Transfer Protocol.
+    Transfers files to or from a portable device via MTP (Media Transfer Protocol).
 .DESCRIPTION
-	The script accepts the following parameters:
-	- SourceDirectory (Aliases: SourceFolder, Source, s): The path to the source directory. Defaults to the current path if not specified.
-	- DestinationDirectory (Aliases: DestinationFolder, Destination, Dest, d): The path to the destination directory. Defaults to the current path if not specified.
-	- FilenamePatterns (Aliases: Patterns, p): An array of filename patterns to search for. Defaults to matching all files. Separate multiple patterns with commas.
-	- Move: A switch which, when included, moves files instead of the default of copying them.
-	- ListDevices (Aliases: GetDevices, ld): A switch for listing the attached MTP-compatible devices. Use this option to get the names for the -DeviceName parameter. All other parameters will be ignored if this is present.
-	- DeviceName (Aliases: Device, dn): The name of the attached device. Must be used if more than one compatible device is attached. Use the -List switch to get the names of MTP-compatible devices.
-	- ListFiles (Aliases: GetFiles, lf, ls): Lists all files in the specified directory. For host directories, this returns a PowerShell file listing as usual; for device directories, this returns objects with Name, Length, LastWriteTime and Type properties. May be used in conjunction with -FilenamePatterns to filter the results.
-.LINK
-	https://github.com/daverayment/Copy-MTPFiles
+    The Media Transfer Protocol (MTP) facilitates file transfers between computers and portable devices like smartphones, cameras, and media players. 
+
+	This script integrates MTP transfers into your PowerShell workflow. It supports features such as file listing (on host and device), device enumeration and pattern matching to enhance and simplify the process.
+
+	For further details, source code, or to report issues, visit the GitHub repository: https://github.com/daverayment/Copy-MTPFiles
 .NOTES
 	Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
+.PARAMETER SourceDirectory
+	The path to the source directory. If not provided, it defaults to the current path.
+	Aliases: SourceFolder, Source, s
+.PARAMETER DestinationDirectory
+	The path to the destination directory. Defaults to the current path if not provided.
+	Aliases: DestinationFolder, Destination, Dest, d
+.PARAMETER FilenamePatterns
+	An array of filename patterns to match. By default, it matches all files. For multiple patterns, separate them with commas (e.g., "*.jpg,*.png").
+	Aliases: Patterns, p
+.PARAMETER Move
+	When this switch is present, files are moved instead of copied.
+.PARAMETER ListDevices
+	Lists attached MTP-compatible devices. Useful to retrieve device names for the -DeviceName parameter. When present, other parameters are ignored.
+	Aliases: GetDevices, ld
+.PARAMETER DeviceName
+	Specifies the name of the attached device to use. Required if multiple compatible devices are attached. Use -ListDevices to retrieve the names of all attached devices.
+	Aliases: Device, dn
+.PARAMETER ListFiles
+	Lists files in the specified directory. For host directories, a standard PowerShell file listing is returned. For directories on a device, this returns objects with Name, Length, LastWriteTime, and Type properties. This can be combined with -FilenamePatterns for filtered results.
+	Aliases: GetFiles, lf, ls
 .EXAMPLE
-	Move files with a .doc or .pdf extension from the Download directory on the device to a specified directory on the host:
+    PS C:\> .\Copy-MTPFiles.ps1 -Move -Source "Internal storage/Download" -Destination "C:\Projects\Documents" -Patterns "*.doc", "*.pdf"
 
-	.\Copy-MTPFiles.ps1 -Move -Source "Internal storage/Download" -Destination "C:\Projects\Documents" -Patterns "*.doc", "*.pdf"
+    Moves .doc and .pdf files from an Android device's Download directory to the specified host directory.
 .EXAMPLE
-	Copy files with a .jpg extension from the Download directory on the device to the current folder:
+    PS C:\> .\Copy-MTPFiles.ps1 "Internal storage/Download" -FilenamePatterns "*.jpg"
 
-	.\Copy-MTPFiles.ps1 "Internal storage/Download" -FilenamePatterns "*.jpg"
+    Copies .jpg files from an Android device's Download directory to the current folder on the host.
 .EXAMPLE
-	Move all files from the current directory on the host computer to the Download directory on the portable device:
+    PS C:\> .\Copy-MTPFiles.ps1 -Move -Source "." -Destination "Internal storage/Download"
 
-	.\Copy-MTPFiles.ps1 -Move -Source "." -Destination "Internal storage/Download"
+    Moves all files from the current host directory to the Download directory on an Android device.
 .EXAMPLE
-	List all compatible devices which are currently attached:
+    PS C:\> .\Copy-MTPFiles.ps1 -l
 
-	.\Copy-MTPFiles.ps1 -l
+    Lists all MTP-compatible devices currently attached.
 #>
+
 [CmdletBinding(SupportsShouldProcess)]
 param(
 	[Alias("SourceFolder", "Source", "s")]
@@ -105,7 +121,7 @@ function Initialize-TransferEnvironment {
 	}) | Format-List
 
 	if ($script:Source.Directory -ieq $script:Destination.Directory) {
-		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop
+		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop -Category InvalidArgument
 	}
 
 	$script:MovedCopied = "copied"
@@ -126,7 +142,7 @@ function Get-ShellApplication {
 	if ($null -eq $script:ShellApp) {
 		$script:ShellApp = New-Object -ComObject Shell.Application
 		if ($null -eq $script:ShellApp) {
-			Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop
+			Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop -Category ResourceUnavailable
 		}
 	}
 
@@ -243,11 +259,18 @@ try {
 
 	Reset-TemporaryDirectory
 
+	if ($PSBoundParameters.Count -eq 0) {
+		Write-Error "No parameters were provided. Please see the usage information below:"
+		Get-Help $PSCommandPath -Detailed
+		return
+	}
+
 	Initialize-TransferEnvironment
 
+	# For moves, we store information about the source files for later deletion.
 	$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
-	# Number of matches found.
+	# Number of files found which match the file pattern.
 	$numMatches = 0
 	# Number of matched files transferred.
 	$numTransfers = 0
