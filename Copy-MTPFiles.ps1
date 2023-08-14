@@ -9,9 +9,9 @@
 	For further details, source code, or to report issues, visit the GitHub repository: https://github.com/daverayment/Copy-MTPFiles
 .NOTES
 	Detecting attached MTP-compatible devices isn't foolproof, so false positives may occur in exceptional circumstances.
-.PARAMETER SourceDirectory
-	The path to the source directory. If not provided, it defaults to the current path.
-	Aliases: SourceFolder, Source, s
+.PARAMETER Source
+	The path to the source directory or file(s). If not provided, it defaults to the current path. Supports wildcards for file matching.
+	Alias: s
 .PARAMETER DestinationDirectory
 	The path to the destination directory. Defaults to the current path if not provided.
 	Aliases: DestinationFolder, Destination, Dest, d
@@ -49,10 +49,10 @@
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
-	[Alias("SourceFolder", "Source", "s")]
+	[Alias("s")]
 	[ValidateNotNullOrEmpty()]
 	[Parameter(Position = 0)]
-	[string]$SourceDirectory = $PWD.Path,
+	[string]$Source = $PWD.Path,
 
 	[Alias("DestinationFolder", "Destination", "d")]
 	[ValidateNotNullOrEmpty()]
@@ -90,7 +90,7 @@ function Set-TransferObject {
 
 	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
 	if ($OnHost) {
-		Test-DirectoryExists -Path $Directory
+		Test-DirectoryExists -Path $Directory -IsSource:$IsSource
 		$Directory = Convert-PathToAbsolute -Path $Directory
 	}
 
@@ -113,12 +113,13 @@ function Initialize-TransferEnvironment {
 	$script:Source = Set-TransferObject -Directory $SourceDirectory -IsSource:$true
 	$script:Destination = Set-TransferObject -Directory $DestinationDirectory
 
+	# Output the source and destination paths. Out-Host used to immediately display them.
 	Write-Output ([PSCustomObject]@{
 		Source = $script:Source.Directory
 		SourceOnHost = $script:Source.OnHost
 		Destination = $script:Destination.Directory
 		DestinationOnHost = $script:Destination.OnHost
-	}) | Format-List
+	}) | Format-List | Out-Host
 
 	if ($script:Source.Directory -ieq $script:Destination.Directory) {
 		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop -Category InvalidArgument
@@ -233,9 +234,47 @@ function Clear-WorkingEnvironment {
 	}
 }
 
+function Initialize-SourceParameter {
+	# Ensure the directory part of the source path does not contain wildcards.
+	$sourceDir = Split-Path $Source -Parent
+	if ($sourceDir -match "\*|\?") {
+		Write-Error "Wildcard characters are not allowed in the directory portion of the source path."
+			-ErrorAction Stop -Category InvalidArgument
+	}
+	
+	# Does the filename part of the path include wildcards?
+	$sourceFilePattern = Split-Path $Source -Leaf
+	if (Get-ContainsWildcard($sourceFilePattern)) {
+		if ($FilenamePatterns) {
+			Write-Error ("Cannot specify wildcards in the SourceDirectory parameter when the FilenamePatterns " +
+				"parameter is also provided.") -ErrorAction Stop
+		}
+
+		# Assign the filename pattern to the patterns parameter.
+		$FilenamePatterns = @($sourceFilePattern)
+		# Update the source directory to just the directory part of the source path.
+		$Source = $sourceDir
+	}
+	elseif (-not (Test-Path -Path $Source -PathType Container)) {
+		if ($FilenamePatterns) {
+			Write-Error ("Cannot specify a file path as the Source while also specifying a FilenamePatterns " +
+				"parameter.") -ErrorAction Stop
+		}
+
+		# Assign the filename pattern to the patterns parameter. Will pick up the single file specified.
+		$FilenamePatterns = @($sourceFilePattern)
+		# Update the source to just the directory part of the path.
+		$Source = $sourceDir
+	}
+}
+
 
 # Main script start.
 $script:ShellApp = $null
+# Number of files found which match the file pattern.
+$numMatches = 0
+# Number of matched files transferred.
+$numTransfers = 0
 
 try {
 	if ($ListDevices) {
@@ -269,11 +308,6 @@ try {
 
 	# For moves, we store information about the source files for later deletion.
 	$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
-
-	# Number of files found which match the file pattern.
-	$numMatches = 0
-	# Number of matched files transferred.
-	$numTransfers = 0
 
 	# A script block to process a single item.
 	$processItem = {
