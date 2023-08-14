@@ -34,23 +34,46 @@ function Test-IsHostDirectory {
 
 # Converts a host path to an absolute path, correctly resolving relative paths.
 function Convert-PathToAbsolute {
-	param([string]$Path)
+	param([string]$Path, [boolean]$IsSource)
 
 	if ([System.IO.Path]::IsPathRooted($Path)) {
 		return $Path
 	}
-	else {
-		return (Resolve-Path -Path (Join-Path -Path $PWD.Path -ChildPath $Path)).Path
-	}
+
+	$absolutePath = [IO.Path]::GetFullPath((Join-Path -Path $PWD.Path -ChildPath $Path))
+
+	# Check if the resolved path exists.
+	if (-not (Test-Path $absolutePath)) {
+		# If the path doesn't exist, the last segment is presumed to be a filename or wildcard pattern.
+		$directoryPart = Split-Path -Path $absolutePath -Parent
+		if (-not (Test-Path -Path $directoryPart -PathType Container)) {
+			# For destination paths, we create non-existent directories.
+			if ($IsSource) {
+				Write-Error "The source directory ""$directoryPart"" does not exist." -ErrorAction Stop -Category ObjectNotFound
+			}
+		}
+	}		
+
+	return $absolutePath
 }
 
-# Create a path if it does not exist.
+# Confirm a directory exists.
 function Test-DirectoryExists {
 	[CmdletBinding(SupportsShouldProcess=$true)]
-	param([string]$Path)
+	param([string]$Path, [boolean]$IsSource)
 
-	if (-not (Test-Path -Path $Path) -and $PSCmdlet.ShouldProcess($Path, "Create directory")) {
-		New-Item -ItemType Directory -Path $Path -Force | Out-Null
+	if (Test-Path -Path $Path -PathType Leaf) {
+		Write-Error "$(if ($IsSource) { "Source" } else { "Destination" }) path ""$Path"" must be a folder, not a file." -ErrorAction Stop -Category InvalidArgument
+	}
+
+	if (-not (Test-Path -Path $Path)) {
+		if ($IsSource) {
+			Write-Error "Source path ""$Path"" does not exist." -ErrorAction Stop -Category ObjectNotFound
+		}
+	
+		if ($PSCmdlet.ShouldProcess($Path, "Create directory")) {
+			New-Item -ItemType Directory -Path $Path -Force | Out-Null
+		}
 	}
 }
 
