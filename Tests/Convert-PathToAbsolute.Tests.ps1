@@ -1,9 +1,17 @@
 Describe "Convert-PathToAbsolute" {
 
     BeforeAll {
-        . $PSScriptRoot/Copy-MTPFilesFunctions.ps1
+        . $PSScriptRoot/../Copy-MTPFilesFunctions.ps1
 
-        $testRoot = Join-Path -Path $PSScriptRoot -ChildPath "Testing"
+        # Our test directory structure lives under this subdirectory. 
+        $testSubDirName = "TestFiles"
+
+        $originalLocation = Get-Location
+        Set-Location $PSScriptRoot
+
+        $testRoot = Join-Path -Path $PSScriptRoot -ChildPath $testSubDirName
+
+        Write-Host "Test root: $testRoot"
 
         # Clean up from any previous tests.
         Remove-Item -Path $testRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -19,17 +27,21 @@ Describe "Convert-PathToAbsolute" {
         # Clean up the test directories and files.
         Remove-Item -Path $testRoot -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $uniqueRootFile -ErrorAction SilentlyContinue
+
+        # Restore original working folder.
+        Set-Location $originalLocation
     }
 
     # Tests.
     It "Converts a relative path to an absolute path" {
-        $testPath = "Testing\\ExistingDir\\ExistingFile.txt"
+        $testPath = "$testSubDirName\\ExistingDir\\ExistingFile.txt"
         Convert-PathToAbsolute -Path $testPath | Should -BeExactly $existingFile
         Convert-PathToAbsolute -Path $(".\\$testPath") | Should -BeExactly $existingFile
     }
 
     It "Throws an error if the directory part of the source doesn't exist" {
-        { Convert-PathToAbsolute -Path "NonexistentDir\\AnyFile.txt" -IsSource $true } | Should -Throw -ExpectedMessage "The source directory ""*"" does not exist."
+        { Convert-PathToAbsolute -Path "NonexistentDir\\AnyFile.txt" -IsSource $true } |
+            Should -Throw -ExpectedMessage "The source directory ""*"" does not exist."
     }
 
     It "Handles a root directory correctly" {
@@ -41,8 +53,7 @@ Describe "Convert-PathToAbsolute" {
     }
 
     It "Accepts an already absolute path" {
-        $absolutePath = Join-Path -Path $testRoot -ChildPath $existingFile
-        Convert-PathToAbsolute -Path $absolutePath | Should -BeExactly $absolutePath
+        Convert-PathToAbsolute -Path $existingFile | Should -BeExactly $existingFile
     }
 
     # ... other tests ...

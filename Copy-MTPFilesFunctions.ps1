@@ -312,22 +312,22 @@ function Copy-SourceFileToTemporaryDirectory {
 	$filename = $FileItem.Name
 
 	# Always copy. If it's a move operation, the source file will be cleaned up post-transfer.
-	$script:Temp.Folder.CopyHere($FileItem)
+	$script:TempDetails.Folder.CopyHere($FileItem)
 
 	# Does the file need to be renamed?
-	if ($script:Destination.Folder.ParseName($filename))
+	if ($script:DestinationDetails.Folder.ParseName($filename))
 	{
-		$newName = Get-UniqueFilename -Folder $script:Destination.Folder -Filename $filename
+		$newName = Get-UniqueFilename -Folder $script:DestinationDetails.Folder -Filename $filename
 		Write-Warning "A file with the same name already exists. The source file ""$filename"" will be transferred as ""$newName""."
 
-		$tempFilePathOld = Join-Path -Path $script:Temp.Directory -ChildPath $filename
-		$tempFilePathNew = Join-Path -Path $script:Temp.Directory -ChildPath $newName
+		$tempFilePathOld = Join-Path -Path $script:TempDetails.Directory -ChildPath $filename
+		$tempFilePathNew = Join-Path -Path $script:TempDetails.Directory -ChildPath $newName
 		Rename-Item -Path $tempFilePathOld -NewName $tempFilePathNew -Force
 		$filename = $newName
 	}
 
 	# Return the newly-transferred temp file.
-	return $script:Temp.Folder.ParseName($filename)
+	return $script:TempDetails.Folder.ParseName($filename)
 }
 
 # Remove a file from the host or an attached device, waiting for any activity on it to finish first.
@@ -350,7 +350,7 @@ function Remove-LockedFile {
 		$start = Get-Date
 
 		# First wait for the file to start transferring.
-		$file = $script:Destination.Folder.ParseName($FileItem.Name)
+		$file = $script:DestinationDetails.Folder.ParseName($FileItem.Name)
 		while ($null -eq $file) {
 			Write-Debug "Waiting for file '$($FileItem.Path)' to start transferring..."
 
@@ -365,7 +365,7 @@ function Remove-LockedFile {
 
 			Start-Sleep -Milliseconds 500
 
-			$file = $script:Destination.Folder.ParseName($FileItem.Name)
+			$file = $script:DestinationDetails.Folder.ParseName($FileItem.Name)
 		}
 
 		do {
