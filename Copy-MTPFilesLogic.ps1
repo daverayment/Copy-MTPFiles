@@ -37,13 +37,16 @@ function Initialize-TransferEnvironment {
 	$script:SourceDetails = Set-TransferObject -Directory $Source -IsSource $true
 	$script:DestinationDetails = Set-TransferObject -Directory $DestinationDirectory
 
-	# Output the source and destination paths. Out-Host used to immediately display them.
-	Write-Output ([PSCustomObject]@{
-		Source = $script:SourceDetails.Directory
-		SourceOnHost = $script:SourceDetails.OnHost
-		Destination = $script:DestinationDetails.Directory
-		DestinationOnHost = $script:DestinationDetails.OnHost
-	}) | Format-List | Out-Host
+    # Output the source and destination path info.
+    function Format-PathDetails {
+        param([string]$PathName, [PSObject]$PathDetails)
+
+        $locationType = if ($PathDetails.OnHost) { "host" } else { "device" }
+        return "{0}: `"{1}`" (on {2})" -f $PathName, $PathDetails.Directory, $locationType
+    }
+
+    Write-Verbose (Format-PathDetails -PathName "Source" -PathDetails $script:SourceDetails)
+    Write-Verbose (Format-PathDetails -PathName "Destination" -PathDetails $script:DestinationDetails)
 
 	if ($script:SourceDetails.Directory -ieq $script:DestinationDetails.Directory) {
 		Write-Error "Source and Destination directories cannot be the same." -ErrorAction Stop -Category InvalidArgument
