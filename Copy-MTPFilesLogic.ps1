@@ -221,7 +221,9 @@ function Main {
 		[string]$ListFiles,
 
 		[Alias("Patterns", "p")]
-		[string[]]$FilenamePatterns = "*"
+		[string[]]$FilenamePatterns = "*",
+
+        [switch]$WarningOnNoMatches
 	)
 
 	$script:ShellApp = $null
@@ -299,7 +301,12 @@ function Main {
 		}
 
 		if ($numMatches -eq 0) {
-			Write-Host "No matching files found."
+            if ($WarningOnNoMatches) {
+                Write-Warning "No matching files found."
+            }
+            else {
+                Write-Host "No matching files found."
+            }
 		}
 		else {
 			Write-Host "$numMatches matching file(s) found. $numTransfers file(s) transferred."
@@ -311,9 +318,11 @@ function Main {
 
 		$movedCopiedInitCap = $script:MovedCopied.Substring(0, 1).ToUpper() + $script:MovedCopied.Substring(1);
 
+        $status = if ($numMatches -eq 0 -and $WarningOnNoMatches) { "Warning"} else { "Completed" }
+
 		return [PSCustomObject]@{
-			Status = "Success"
-			Message = "$movedCopiedInitCap files."
+			Status = $status
+			Message = if ($numMatches -eq 0) { "No matching files found." } else { "$movedCopiedInitCap files." }
 			FilesMatched = $numMatches
 			FilesTransferred = $numTransfers
 		}

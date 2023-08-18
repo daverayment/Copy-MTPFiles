@@ -71,7 +71,9 @@ param(
 	[string]$ListFiles,
 
 	[Alias("Patterns", "p")]
-	[string[]]$FilenamePatterns = "*"
+	[string[]]$FilenamePatterns = "*",
+
+	[switch]$WarningOnNoMatches
 )
 
 . ./Copy-MTPFilesLogic.ps1
