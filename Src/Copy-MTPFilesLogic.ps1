@@ -1,14 +1,27 @@
-. ./Copy-MTPFilesFunctions.ps1
+# Functions related to the MTP device and COM folders.
+if (Get-Module MTPDevice) {
+	Write-Debug "Removing MTPDevice module."
+	Remove-Module MTPDevice
+}
+Import-Module "$PSScriptRoot\MTPDevice.psm1"
+
+# Ancillary functions.
+. "$PSScriptRoot\Copy-MTPFilesFunctions.ps1"
+
 
 # Custom format for file listings to keep it reasonably similar to Get-ChildItem.
-Update-FormatData -PrependPath .\MTPFileFormat.ps1xml
+Update-FormatData -PrependPath "$PSScriptRoot\MTPFileFormat.ps1xml"
 
 Set-StrictMode -Version 2.0
+
 
 # Create and return a custom object representing the source or destination directory information.
 function Set-TransferObject {
 	[CmdletBinding(SupportsShouldProcess)]
 	param([string]$Directory, [bool]$IsSource)
+
+    # TODO: rename fn to Get-TransferObject
+    #     Integrate the Initialize-SourceParameter fn?
 
 	$Directory = $Directory.TrimEnd('/').TrimEnd('\\')
 
@@ -63,18 +76,6 @@ function Initialize-TransferEnvironment {
 		Folder = (Get-ShellApplication).Namespace($tempPath)
 		LastFileItem = $null
 	}
-}
-
-# Ensure we have a script-level Shell Application object for COM interactions.
-function Get-ShellApplication {
-	if ($null -eq $script:ShellApp) {
-		$script:ShellApp = New-Object -ComObject Shell.Application
-		if ($null -eq $script:ShellApp) {
-			Write-Error "Failed to create a COM Shell Application object." -ErrorAction Stop -Category ResourceUnavailable
-		}
-	}
-
-	$script:ShellApp
 }
 
 # Transfer a file from the source to the destination.
@@ -161,41 +162,144 @@ function Clear-WorkingEnvironment {
 	}
 }
 
-# Validate the Source parameter and perform any necessary pre-processing.
-function Initialize-SourceParameter {
+# Validate the Source parameter and perform any necessary pre-processing for path and wildcards.
+function Resolve-SourceParameter {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory = $true)]
 		[string]$Source,
-		[string[]]$FilenamePatterns = "*"
+		[string[]]$FilenamePatterns = "*",
+		[System.__ComObject]$Device = $null
 	)
 
-	$sourceDir = Split-Path $Source -Parent
-	$sourceFilePattern = Split-Path $Source -Leaf
+	$isDeviceSource = $false
+
+	if ($Device) {
+		# Does the first part of the source look like a device path?
+		$isDeviceSource = Get-IsDevicePath -Path $Source -Device $Device
+
+		if ($isDeviceSource) {
+			# Split the path string into segments and also retrieve the matching folders on the device.
+			$sections = $Source.Split("/")
+			$folders = @(Get-MTPIterator -ParentFolder $Device.GetFolder() -Path $Source)
+
+			# A valid path will have the same number of folders returned as there are path string segments.
+			if ($folders.Length -eq $sections.Length) {
+				if ($null -eq $folders[-1]) {
+					# The last part of the path didn't match a folder, so assume it is a file.
+					$sourceDir = (Split-Path $Source -Parent).Replace('\', '/')
+					$sourceFilePattern = Split-Path $Source -Leaf
+				} else {
+					# The entire path has been found as folders on the device.
+					$sourceDir = $sections -join '/'
+					$sourceFilePattern = $FilenamePatterns
+				}
+			} else {
+				# Could not iterate through the whole path.
+				# Niche case: is there a host directory with the same path?
+				if (Test-Path -Path $Source) {
+					$isDeviceSource = $false
+				} else {
+					# The source must exist but cannot be found on the device.
+					Write-Error "Specified source path ""$Source"" does not exist." -ErrorAction Stop `
+						-Category ObjectNotFound
+				}
+			}
+		}
+	}
+
+	# Host-specific processing.
+	if (-not $isDeviceSource) {
+		$sourceDir = Split-Path $Source -Parent
+		$sourceFilePattern = Split-Path $Source -Leaf
 	
+		if (-not $sourceDir) {
+			$sourceDir = "."
+		}
+	}
+
 	# Check for wildcards in the directory part of the source path.
 	if ($sourceDir -match "\*|\?") {
-		Write-Error "Wildcard characters are not allowed in the directory portion of the source path."
+		Write-Error "Wildcard characters are not allowed in the directory portion of the source path." `
 			-ErrorAction Stop -Category InvalidArgument
 	}
 
-	# Process wildcards or specific file in the source path.
-	if (($sourceFilePattern -match "\*|\?") -or
-		(-not (Test-Path -Path $Source -PathType Container))) {
-
-		if ($FilenamePatterns -ne "*") {
-			Write-Error ("Cannot specify wildcards in the Source parameter when the FilenamePatterns " +
-				"parameter is not provided.") -ErrorAction Stop
-		}
-		# Set the pattern so we can match the file(s) later.
-		$FilenamePatterns = @($sourceFilePattern)
-		# Update the source directory to just the directory part of the path.
-		$Source = $sourceDir
+	if (-not $isDeviceSource) {
+		# NB: we do not need to do a check for the device here because it has already been done above.
+		if (-not (Test-Path -Path $sourceDir)) {
+			Write-Error "Specified source directory ""$sourceDir"" does not exist." -ErrorAction Stop `
+				-Category ObjectNotFound
+		}		
 	}
 
-	return @{
-		Source = $Source
-		FilenamePatterns = $FilenamePatterns
+	# At this point, we know that the folders part of the source path is valid.
+
+	# Process wildcards or specific file in the source path.
+	if (($sourceFilePattern -match "\*|\?")) {
+		if ($FilenamePatterns -ne "*") {
+			Write-Error ("Cannot specify wildcards in the Source parameter when the FilenamePatterns " +
+				"parameter is also provided.") -ErrorAction Stop -Category InvalidArgument
+		}
+	} else {
+		# $sourceFilePattern should contain the exact filename we're looking for.
+		if ($isDeviceSource) {
+			$lastFolder = if ($null -eq $folders[-1]) { $folders[-2] } else { $folders[-1] }
+
+			if ($lastFolder.ParseName($sections[-1])) {
+				$fileExists = $true
+			}
+		} else {
+			$fileExists = Test-Path -Path $Source -PathType Leaf
+		}
+
+		if ($FilenamePatterns -ne "*" -and $fileExists) {
+			# We do not allow wildcard patterns when the source resolves to a single file.
+			Write-Error "Cannot provide FilenamePatterns parameter when the Source is a file." `
+				-ErrorAction Stop -Category InvalidArgument
+		}
+
+		# If the source path refers to a single file, it must exist.
+		if (-not $fileExists) {
+			Write-Error "Specified source file ""$Source"" does not exist." -ErrorAction Stop `
+				-Category ObjectNotFound
+		}
+	}
+
+	return [PSCustomObject]@{
+		Source = $sourceDir
+		FilenamePatterns = $sourceFilePattern
+		IsDeviceSource = $isDeviceSource
+	}
+}
+
+function Test-EmptyParameterList {
+	param(
+		[Parameter(Mandatory = $true)]
+		[hashtable]$BoundParameters,
+		[Parameter(Mandatory = $true)]
+		[System.Management.Automation.FunctionInfo]$CommandMetadata
+	)
+
+	$scriptParams = $CommandMetadata.Parameters.Keys
+
+	$commonParams = [System.Management.Automation.PSCmdlet]::CommonParameters
+	$boundUserParams = $BoundParameters.Keys |
+		Where-Object { $_ -in $scriptParams -and $_ -notin $commonParams -and $_ -ne "CallingScriptPath" }
+	return (-not $boundUserParams)
+}
+
+function Get-DeviceList {
+	$devices = @(Get-MTPDevice)
+	if ($devices.Length -eq 0) {
+		Write-Warning "No MTP devices found."
+	}
+	else {
+		$devices | ForEach-Object {
+			[PSCustomObject]@{
+				Name = $_.Name
+				Type = $_.Type
+			}
+		}
 	}
 }
 
@@ -226,10 +330,11 @@ function Main {
 		[Alias("Patterns", "p")]
 		[string[]]$FilenamePatterns = "*",
 
-        [switch]$WarningOnNoMatches
+        [switch]$WarningOnNoMatches,
+
+		[string]$CallingScriptPath
 	)
 
-	$script:ShellApp = $null
 	# Number of files found which match the file pattern.
 	$numMatches = 0
 	# Number of matched files transferred.
@@ -237,34 +342,38 @@ function Main {
 
 	try {
 		if ($ListDevices) {
-			Get-MTPDevice | ForEach-Object {
-				[PSCustomObject]@{
-					Name = $_.Name
-					Type = $_.Type
-				}
-			}
+			Get-DeviceList
 			return
 		}
 
-		Initialize-DeviceInfo
-
-		Reset-TemporaryDirectory
-
-		if ($PSBoundParameters.Count -eq 0) {
-			Write-Error "No parameters were provided. Please see the usage information below:"
-			Get-Help $PSCommandPath -Detailed
+		if (Test-EmptyParameterList -BoundParameters $PSBoundParameters -CommandMetadata $PSCmdlet.MyInvocation.MyCommand) {
+			Write-Error "No parameters were provided. Please see the usage information below:" -Category InvalidArgument
+			Get-Help $($CallingScriptPath) -Detailed
 			return
 		}
 
-		$sourceInfo = Initialize-SourceParameter -Source $Source -FilenamePatterns $FilenamePatterns
+		# Get the attached MTP device. (Could be $null.)
+		$device = Get-TargetDevice -DeviceName $DeviceName
+
+		if ($PSBoundParameters.ContainsKey("ListFiles")) {
+			$Source = $ListFiles
+		}
+
+		# We need to do source path validation and set up before any transfers.
+		$sourceInfo = Resolve-SourceParameter -Source $Source -FilenamePatterns $FilenamePatterns -Device $device
 		$Source = $sourceInfo.Source
 		$FilenamePatterns = $sourceInfo.FilenamePatterns
 
-		$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
-
 		if ($PSBoundParameters.ContainsKey("ListFiles")) {
-			return Get-FileList -DirectoryPath $ListFiles -RegexPattern $regexPattern
+			return Get-FileList -Path $ListFiles -Device $device -RegexPattern (Convert-WildcardsToRegex -Patterns $FilenamePatterns)
 		}
+		
+		return
+		
+		Reset-TemporaryDirectory
+
+		# Now the regex can be built, which is needed for both transfers and ListFiles.
+		$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
 		Initialize-TransferEnvironment
 

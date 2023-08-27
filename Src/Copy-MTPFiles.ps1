@@ -42,7 +42,7 @@
 
     Moves all files from the current host directory to the Download directory on an Android device.
 .EXAMPLE
-    PS C:\> .\Copy-MTPFiles.ps1 -l
+    PS C:\> .\Copy-MTPFiles.ps1 -ld
 
     Lists all MTP-compatible devices currently attached.
 #>
@@ -76,6 +76,7 @@ param(
 	[switch]$WarningOnNoMatches
 )
 
-. ./Copy-MTPFilesLogic.ps1
+. "$PSScriptRoot\Copy-MTPFilesLogic.ps1"
 
+$PSBoundParameters["CallingScriptPath"] = $PSCommandPath
 Main @PSBoundParameters

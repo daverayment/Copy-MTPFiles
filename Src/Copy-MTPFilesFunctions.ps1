@@ -1,25 +1,3 @@
-# Retrieve all the MTP-compatible devices.
-function Get-MTPDevice {
-	(Get-ShellApplication).NameSpace(17).Items() | Where-Object { $_.IsBrowsable -eq $false -and $_.IsFileSystem -eq $false }
-}
-
-# Find a matching device and initialise the script-level Device object with its properties.
-function Initialize-DeviceInfo {
-	$script:Device = $null
-	$devices = Get-MTPDevice
-
-	# There must be at least one device. If multiple devices are found, the device name must be supplied.
-	# If the device name is given, it must match, even if only 1 device is present.
-	if ($devices -and ($devices.Count -eq 1 -or $DeviceName)) {
-		$script:Device = if ($DeviceName) {
-			$devices | Where-Object { $_.Name -ieq $DeviceName }
-		}
-		else {
-			$devices
-		}
-	}
-}
-
 # Returns whether the provided path is formatted like one from the host computer.
 # Note: this does not check whether the directory exists.
 function Test-IsHostDirectory {
@@ -29,7 +7,14 @@ function Test-IsHostDirectory {
 		[string]$DirectoryPath
 	)
 
-	return $DirectoryPath.StartsWith('.') -or [System.IO.Path]::IsPathRooted($DirectoryPath) -or $DirectoryPath.Contains('\')
+	# Device paths contain forward slashes.
+	if ($DirectoryPath -contains '/') {
+		return $false
+	}
+
+	return $DirectoryPath.StartsWith('.') -or
+		[System.IO.Path]::IsPathRooted($DirectoryPath) -or
+		$DirectoryPath.Contains('\')
 }
 
 # Converts a host path to an absolute path, correctly resolving relative paths.
@@ -57,166 +42,162 @@ function Convert-PathToAbsolute {
 	return $absolutePath
 }
 
-# Confirm a directory exists.
-function Test-DirectoryExists {
-	[CmdletBinding(SupportsShouldProcess=$true)]
-	param([string]$Path, [boolean]$IsSource)
+# Ensure a host directory exists, creating it if necessary.
+function Confirm-HostDirectoryExists {
+	[CmdletBinding(SupportsShouldProcess = $true)]
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$DirectoryPath
+	)
 
-	if (Test-Path -Path $Path -PathType Leaf) {
-		Write-Error "$(if ($IsSource) { "Source" } else { "Destination" }) path ""$Path"" must be a folder, not a file." -ErrorAction Stop -Category InvalidArgument
+	if (Test-Path -Path $DirectoryPath -PathType Leaf) {
+		Write-Error "Path ""$DirectoryPath"" must be a folder, not a file." -ErrorAction Stop -Category InvalidArgument
 	}
 
-	if (-not (Test-Path -Path $Path)) {
-		if ($IsSource) {
-			Write-Error "Source path ""$Path"" does not exist." -ErrorAction Stop -Category ObjectNotFound
+	if (-not (Test-Path -Path $DirectoryPath -PathType Container)) {
+		Write-Verbose "Creating directory ""$DirectoryPath""."
+
+		try {
+			Invoke-WithRetry -Command { New-Item -Type Directory -Path $using:DirectoryPath -Force | Out-Null }
 		}
-	
-		if ($PSCmdlet.ShouldProcess($Path, "Create directory")) {
-			New-Item -ItemType Directory -Path $Path -Force | Out-Null
+		catch {
+			throw "Could not create directory ""$DirectoryPath"" after $maxAttempts attempts. Please check you have adequate permissions."
 		}
 	}
 }
 
-# Retrieves a COM reference to a local or device directory. If the directory does not exist,
-# it is created. If a device is not specified and multiple MTP-compatible devices are found,
-# an error is thrown.
+# Returns a COM reference to a directory on the host.
+function Get-HostCOMFolder {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$DirectoryPath
+	)
+
+	Confirm-HostDirectoryExists -DirectoryPath $DirectoryPath
+	return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
+}
+
+# Retrieves a COM reference to a host or device directory.
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[string]$DirectoryPath,
+		[string]$Path,
 
-		[bool]$IsSource,
-
-		[switch]$IsFileListing
+		[System.__ComObject]$Device
 	)
 
-	$maxAttempts = 3
-	$currentAttempt = 1
-	$retryDelay = 2		# seconds
+	if (Test-IsHostDirectory -DirectoryPath $Path) {
+		return Get-HostCOMFolder -DirectoryPath $Path
+	} else {
+		# Retrieve the root folder of the attached device.
+		$deviceRoot = (Get-ShellApplication).Namespace($Device.Path)
 
-	if (-not $IsSource -and -not $PSCmdlet.ShouldProcess($DirectoryPath, "Get folder")) {
-		return $null
+		# Return a reference to the requested path on the device.
+		return Get-DeviceCOMFolder -ParentFolder $deviceRoot -FolderPath $Path
 	}
-
-	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
-		if (-not (Test-Path -Path $DirectoryPath)) {
-			do {
-				try {
-					New-Item -Type Directory -Path $DirectoryPath -Force | Out-Null
-
-					break	# break out of the retry loop
-				}
-				catch {
-					$retriesLeft = $maxAttempts - $currentAttempt
-					Write-Error "Failed to create directory ""$DirectoryPath"". " +
-						"$retriesLeft retr$(if ($retriesLeft -eq 1) { "y" } else { "ies" }) left."
-						-Category InvalidOperation -TargetObject $DirectoryPath -ErrorVariable folderError
-					$currentAttempt++
-
-					Start-Sleep -Seconds $retryDelay
-				}	
-			} while ($currentAttempt -lt $maxAttempts)
-
-			if ($currentAttempt -eq $numAttempts) {
-				throw "Could not create directory ""$DirectoryPath"" after $maxAttempts attempts. Please check you have adequate permissions."
-			}
-		}
-		return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
-	}
-
-	$devices = Get-MTPDevice
-
-	if (-not $script:Device) {
-		throw "No compatible devices found. Please connect a device in Transfer Files mode."
-	}
-	elseif ($devices.Count -gt 1 -and -not $DeviceName) {
-		throw "Multiple MTP-compatible devices found. Please use the '-DeviceName' parameter to specify the " +
-			"device to use. Use the '-ListDevices' switch to list connected compatible devices."
-	}
-
-	Write-Verbose "Using $($script:Device.Name) ($($script:Device.Type))."
-
-	# Retrieve the root folder of the attached device.
-	$deviceRoot = (Get-ShellApplication).Namespace($device.Path)
-
-	# Return a reference to the requested path on the device. Creates folders if required (if the user is not just requesting to list files)
-	return Get-MTPFolderByPath -ParentFolder $deviceRoot -FolderPath $DirectoryPath -IsSource $IsSource
-		-IsFileListing:$IsFileListing
 }
 
-# Retrieve an MTP folder by path. Returns $null if part of the path is not found.
-function Get-MTPFolderByPath {
-	[CmdletBinding(SupportsShouldProcess)]
+# Retries a command until it succeeds or the maximum number of attempts is reached.
+function Invoke-WithRetry {
 	param(
 		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[System.__ComObject]$ParentFolder,
+		[scriptblock]$Command,
 
-		[Parameter(Mandatory = $true)]
-		[ValidateNotNullOrEmpty()]
-		[string]$FolderPath,
+		[int]$MaxAttempts = 3,
 
-		[bool]$IsSource
+		[int]$RetryDelay = 2	# seconds
 	)
 
-	$sections = $FolderPath.Split('/')
-	$folderIndex = 0
+	$currentAttempt = 0
 
-	# Loop through each path subfolder in turn, creating folders if they don't already exist.
-	foreach ($directory in $sections) {
-		Write-Progress -Activity "Scanning Device Folders" -Status "Processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
-		$nextFolder = $ParentFolder.ParseName($directory)
-
-		# The source folder must exist.
-		if ($IsSource -and $null -eq $nextFolder) {
-			Write-Error ("Source directory ""$directory"" not found. Check the provided source directory path " +
-				"for errors and try again.") -Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
+	while ($true) {
+		try {
+			$currentAttempt++
+			$Command.Invoke()
+			return
 		}
-
-		# If the folder doesn't already exist, try to create it.
-		if ($null -eq $nextFolder) {
-			# If the user is just listing the folder contents, report error and exit.
-			if ($ListFiles) {
-				Write-Error "Folder ""$directory"" not found. Please verify the folder path and try again."
-					-Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
+		catch {
+			if ($currentAttempt -eq $MaxAttempts) {
+				throw
 			}
-
-			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
-				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
-				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting."
-					-TargetObject $directory -ErrorAction Stop
-			}
-
-			$ParentFolder.NewFolder($directory)
-			$nextFolder = $ParentFolder.ParseName($directory)
-
-			# If creation failed, write error and stop.
-			if ($null -eq $nextFolder) {
-				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
-					"permissions on the device.") -Category PermissionDenied -TargetObject $directory -ErrorAction Stop
-			}
-
-			Write-Verbose "Created new directory ""$directory""."
-		}
-		# If the item was found but it isn't a folder, write error and stop.
-		elseif (-not $nextFolder.IsFolder) {
-			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
-				-Category WriteError -TargetObject $directory -ErrorAction Stop
-		}
-
-		# Continue looping until all subfolders have been navigated.
-		$ParentFolder = $nextFolder.GetFolder
-
-		$folderIndex++
-		Write-Progress -Activity "Scanning Device Folders" -Status "Completed processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
+			Start-Sleep -Seconds $RetryDelay
+		}	
 	}
-
-	Write-Progress -Activity "Scanning Device Folders" -Completed
-
-	return $ParentFolder
 }
+
+# # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
+# function Get-MTPFolderByPath {
+# 	[CmdletBinding(SupportsShouldProcess)]
+# 	param(
+# 		[Parameter(Mandatory = $true)]
+# 		[ValidateNotNullOrEmpty()]
+# 		[System.__ComObject]$ParentFolder,
+
+# 		[Parameter(Mandatory = $true)]
+# 		[ValidateNotNullOrEmpty()]
+# 		[string]$FolderPath,
+
+# 		[bool]$IsSource
+# 	)
+
+# 	$sections = $FolderPath.Trim('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+# 	$folderIndex = 0
+
+# 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
+# 	foreach ($directory in $sections) {
+# 		Write-Progress -Activity "Scanning Device Folders" -Status "Processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
+# 		$nextFolder = $ParentFolder.ParseName($directory)
+
+# 		# The source folder must exist.
+# 		if ($IsSource -and $null -eq $nextFolder) {
+# 			Write-Error ("Source directory ""$directory"" not found. Check the provided source directory path " +
+# 				"for errors and try again.") -Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
+# 		}
+
+# 		# If the folder doesn't already exist, try to create it.
+# 		if ($null -eq $nextFolder) {
+# 			# If the user is just listing the folder contents, report error and exit.
+# 			if ($ListFiles) {
+# 				Write-Error "Folder ""$directory"" not found. Please verify the folder path and try again."
+# 					-Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
+# 			}
+
+# 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
+# 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
+# 				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting."
+# 					-TargetObject $directory -ErrorAction Stop
+# 			}
+
+# 			$ParentFolder.NewFolder($directory)
+# 			$nextFolder = $ParentFolder.ParseName($directory)
+
+# 			# If creation failed, write error and stop.
+# 			if ($null -eq $nextFolder) {
+# 				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
+# 					"permissions on the device.") -Category PermissionDenied -TargetObject $directory -ErrorAction Stop
+# 			}
+
+# 			Write-Verbose "Created new directory ""$directory""."
+# 		}
+# 		# If the item was found but it isn't a folder, write error and stop.
+# 		elseif (-not $nextFolder.IsFolder) {
+# 			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
+# 				-Category WriteError -TargetObject $directory -ErrorAction Stop
+# 		}
+
+# 		# Continue looping until all subfolders have been navigated.
+# 		$ParentFolder = $nextFolder.GetFolder
+
+# 		$folderIndex++
+# 		Write-Progress -Activity "Scanning Device Folders" -Status "Completed processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
+# 	}
+
+# 	Write-Progress -Activity "Scanning Device Folders" -Completed
+
+# 	return $ParentFolder
+# }
 
 # For more efficient processing, create a single regular expression to represent the filename patterns.
 function Convert-WildcardsToRegex {
@@ -404,37 +385,39 @@ function Get-FileList {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[string]$DirectoryPath,
+		[string]$Path,
 
-		[string]$RegexPattern
+		[string]$RegexPattern,
+
+		[System.__ComObject]$Device = $null
 	)
 
-	if (Test-IsHostDirectory -DirectoryPath $DirectoryPath) {
-		if (-not (Test-Path -Path $DirectoryPath)) {
-			Write-Error "Directory ""$DirectoryPath"" does not exist." -ErrorAction Stop
+	if (Test-IsHostDirectory -DirectoryPath $Path) {
+		if (-not (Test-Path -Path $Path)) {
+			Write-Error "Directory ""$Path"" does not exist." -ErrorAction Stop
 		}
-		$items = Get-ChildItem -Path $DirectoryPath
+		$items = Get-ChildItem -Path $Path
 		if ($RegexPattern) {
 			$items = $items | Where-Object { $_.Name -match $RegexPattern }
 		}
 		return $items
-	}
+	} else {
+		$folder = Get-COMFolder -Path $Path -Device $Device
 
-	$folder = Get-COMFolder -DirectoryPath $DirectoryPath -IsFileListing
+		# 0..287 | Foreach-Object {
+		# 	$propertyValue = $folder.GetDetailsOf($item, $_)
+		# 	if ($propertyValue) {
+		# 		$propertyName = $folder.GetDetailsOf($null, $_)
+		# 		Write-Output "$_ > $propertyName : $propertyValue"
+		# 	}
+		# }
 
-	# 0..287 | Foreach-Object {
-	# 	$propertyValue = $folder.GetDetailsOf($item, $_)
-	# 	if ($propertyValue) {
-	# 		$propertyName = $folder.GetDetailsOf($null, $_)
-	# 		Write-Output "$_ > $propertyName : $propertyValue"
-	# 	}
-	# }
-
-	foreach ($item in $folder.Items()) {
-		if ($RegexPattern -and -not ($item.Name -match $RegexPattern)) {
-			continue
+		foreach ($item in $folder.Items()) {
+			if ($RegexPattern -and -not ($item.Name -match $RegexPattern)) {
+				continue
+			}
+			Format-Item $item $folder
 		}
-		Format-Item $item $folder
 	}
 }
 
