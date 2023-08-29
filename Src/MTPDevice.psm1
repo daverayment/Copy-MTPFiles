@@ -1,4 +1,5 @@
 # Return a COM reference to the shell application. Created if it does not exist.
+# Use `Remove-ShellApplication` to clean up the COM object after use.
 function Get-ShellApplication {
 	if ($null -eq $ShellApp) {
 		$ShellApp = New-Object -ComObject Shell.Application
@@ -116,8 +117,7 @@ function Get-MTPIterator {
 	param(
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		# [System.__ComObject]$ParentFolder,
-		[Object]$ParentFolder,
+		[System.__ComObject]$ParentFolder,
 
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
