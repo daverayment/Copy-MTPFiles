@@ -55,9 +55,10 @@ Describe "Copy-MTPFiles" {
     }
 }
 
-# NB: this needs to be run with an Android device connected with a top-level folder called "Internal storage".
 Describe "Get-IsDevicePath Validation" {
     BeforeAll {
+        . .\Mocks.ps1
+
         $device = Get-TargetDevice
     }
 
@@ -65,16 +66,16 @@ Describe "Get-IsDevicePath Validation" {
         Get-IsDevicePath "Internal storage" $device | Should -Be $true
     }
 
-    It "Detects when the supplied path is a top-level folder on the device. Case-insensitive comparison." {
-        Get-IsDevicePath "internal STORAGE" $device | Should -Be $true
+    It "Detects when the supplied path is a top-level folder on the device with incorrect case." {
+        Get-IsDevicePath "internal STORAGE" $device | Should -Be $false
     }
 
     It "Detects when the supplied path is the top-level folder on the device. With trailing slash." {
         Get-IsDevicePath "Internal storage/" $device | Should -Be $true
     }
 
-    It "Detects when the supplied path is a top-level folder on the device. With trailing slash. Case-insensitive comparison." {
-        Get-IsDevicePath "internal STORAGE/" $device | Should -Be $true
+    It "Detects when the supplied path is a top-level folder on the device. With trailing slash and incorrect case." {
+        Get-IsDevicePath "internal STORAGE/" $device | Should -Be $false
     }
 
     It "Detects when the supplied path is a nested folder on the device." {
@@ -104,176 +105,176 @@ Describe "Get-IsDevicePath Validation" {
 
 Describe "Iterator tests" {
     BeforeAll {
-        # This is a representation of our mocked file system.
-        $MockFileSystem = @{
-            'Internal storage' = @{
-                'MTPFilesTestDirA' = @{ };
-                'MTPFilesTestDirB' = @{
-                    'DeviceFileA' = "file";
-                    'DeviceFileA.txt' = 'file';
-                    'DeviceFileB.txt' = 'file';
-                    'DeviceFileA.jpg' = 'file';
-                };
-                'MTPFilesTestDirC' = @{ };
-                'MTPFilesTestFile' = 'file';
-                'MTPFilesTestFile.doc' = 'file';
-            }
-        }
-
-        function Get-MockedItem {
-            param(
-                [Parameter(Mandatory = $true)]
-                [string]$Path,
-
-                [scriptblock]$Function,
-
-                [hashtable]$FileSystem
-            )
-
-            $pathSections = $Path.Trim("/").Split("/", [StringSplitOptions]::RemoveEmptyEntries)
-            $currentItem = $FileSystem
-
-            foreach ($section in $pathSections) {
-                # Navigate deeper down the path if the next section exists.
-                if ($currentItem -is [hashtable] -and $currentItem.ContainsKey($section)) {
-                    $currentItem = $currentItem[$section]
-                } else {
-                    # The path doesn't exist.
-                    return $null
-                }
-            }
-
-            $itemObj = [PSCustomObject]@{
-                IsFolder = $currentItem -is [hashtable]
-                Name     = if ($pathSections) { $pathSections[-1] } else { "/" }
-                Item     = $currentItem
-            }
-
-            $itemObj | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { return $this }
-            $itemObj | Add-Member -MemberType ScriptMethod -Name ParseName `
-                -Value (Create-ParseNameMethod -Path $Path -Function ${function:Get-MockedItem} -FileSystem $FileSystem)
-            
-            return $itemObj
-        }
-        
-        function Create-ParseNameMethod {
-            param(
-                [Parameter(Mandatory = $true)]
-                [string]$Path,
-
-                [Parameter(Mandatory = $true)]
-                [scriptblock]$Function,
-
-                [hashtable]$FileSystem
-            )
-
-            return {
-                param($Name)
-                & $Function -Path "$Path/$Name" -FileSystem $FileSystem
-            }.GetNewClosure()
-        }
-
-        Mock Get-TargetDevice {
-            return Get-MockedItem -Path "/" -FileSystem $MockFileSystem
-        }
+        . .\Mocks.ps1
 
         $device = Get-TargetDevice
         $parentFolder = $device.GetFolder()
     }
 
-    # Test the mocks independently.
+    # The following tests test the mocks independently of the application.
+
+    # 'SomeHostFolder' = @{
+    #     'HostSubFolderA' = @{
+    #         'HostFileA' = 'file';
+    #         'HostFileA.txt' = 'file';
+    #     };
+    #     'HostFileB' = 'file';
+    #     'HostFileB.txt' = 'file';
+    # };
+    # 'Internal storage' = @{
+    #     'HostSubFolderB' = @{ };
+    #     'HostFileC.txt' = 'file';
+    # }
+
+    It "Tests an invalid top-level path." {
+        Test-Path 'Invalid' | Should -Be $false
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests the top-level folder. Relative path." {
+        Test-Path 'SomeHostFolder' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a child folder." {
+        # NB: backslashes need not be doubled in single-quoted strings.
+        Test-Path 'SomeHostFolder\HostSubFolderA' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests an invalid child path." {
+        Test-Path 'SomeHostFolder\Invalid' | Should -Be $false
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a file in a top-level folder without an extension." {
+        Test-Path 'SomeHostFolder\HostFileB' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a file in a top-level folder with an extension." {
+        Test-Path 'SomeHostFolder\HostFileB.txt' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a file in a child folder without an extension." {
+        Test-Path 'SomeHostFolder\HostSubFolderA\HostFileA' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a file in a child folder with an extension." {
+        Test-Path 'SomeHostFolder\HostSubFolderA\HostFileA.txt' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests the top-level folder with a trailing slash." {
+        Test-Path 'SomeHostFolder\' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }
+
+    It "Tests a mixed-case valid path." {
+        # Case-insensitive comparison.
+        Test-Path 'someHOSTfolder' | Should -Be $true
+        Should -Invoke Test-Path -Times 1 -Exactly
+    }   
+
 
     # Confirm the device root is correct and not 'Internal storage'.
     It "Retrieves the root folder." {
         $root = Get-TargetDevice
         $root.Name | Should -Be "/"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves the top-level folder." {
         $folder = (Get-TargetDevice).ParseName("Internal storage")
         $folder.Name | Should -Be "Internal storage"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves a child folder." {
         $folder = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB")
         $folder.Name | Should -Be "MTPFilesTestDirB"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies the root as a folder." {
         $folder = (Get-TargetDevice).ParseName("/")
         $folder.IsFolder | Should -Be $true
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies the top-level folder as a folder." {
         $folder = (Get-TargetDevice).ParseName("Internal storage")
         $folder.IsFolder | Should -Be $true
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies a child folder as a folder." {
         $folder = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB")
         $folder.IsFolder | Should -Be $true
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves a file without an extension from the top-level folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestFile")
         $file.Name | Should -Be "MTPFilesTestFile"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies a file without an extension from the top-level folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestFile")
         $file.IsFolder | Should -Be $false
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves a file with an extension from the top-level folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestFile.doc")
         $file.Name | Should -Be "MTPFilesTestFile.doc"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies a file with an extension from the top-level folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestFile.doc")
         $file.IsFolder | Should -Be $false
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves a file with an extension from a child folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB").GetFolder().ParseName("DeviceFileA.txt")
         $file.Name | Should -Be "DeviceFileA.txt"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies a file with an extension from a child folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB").GetFolder().ParseName("DeviceFileA.txt")
         $file.IsFolder | Should -Be $false
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Retrieves a file without an extension from a child folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB").GetFolder().ParseName("DeviceFileA")
         $file.Name | Should -Be "DeviceFileA"
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
     It "Identifies a file without an extension from a child folder." {
         $file = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("MTPFilesTestDirB").GetFolder().ParseName("DeviceFileA")
         $file.IsFolder | Should -Be $false
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
-    It "Returns $null for an invalid top-level path." {
+    It "Returns `$null for an invalid top-level path." {
         $invalidItem = (Get-TargetDevice).ParseName("Invalid")
         $invalidItem | Should -Be $null
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
 
-    It "Returns $null for an invalid child path." {
+    It "Returns `$null for an invalid child path." {
         $invalidItem = (Get-TargetDevice).ParseName("Internal storage").GetFolder().ParseName("Invalid")
         $invalidItem | Should -Be $null
+        Should -Invoke Get-TargetDevice -Times 1 -Exactly
     }
-
-    # It "Iterates through the folders on the device from the root." {
-    #     foreach ($folder in Get-MTPIterator $parentFolder "Internal storage/MTPFilesTestDirB/DeviceFileA.txt") {
-    #         if ($folder) {
-    #             Write-Host $folder.Name
-    #         }
-    #         else {
-    #             Write-Host "$folder not found."
-    #         }
-    #     }
-    # }
 }
 
 Describe "Parameter Validation" {
