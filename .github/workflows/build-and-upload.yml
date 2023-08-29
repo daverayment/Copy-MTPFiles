@@ -22,10 +22,11 @@ jobs:
       - name: Build Module
         shell: powershell
         run: |
-          Get-Content .\Copy-MTPFiles.ps1 | Add-Content -Path Copy-MTPFiles.psm1
-          Get-Content .\Copy-MTPFilesFunctions.ps1 | Add-Content -Path Copy-MTPFiles.psm1
+          Get-Content .\src\Copy-MTPFiles.ps1 | Add-Content -Path Copy-MTPFiles.psm1
+          Get-Content .\src\Copy-MTPFilesLogic.ps1 | Add-Content -Path Copy-MTPFiles.psm1
+          Get-Content .\src\Copy-MTPFilesFunctions.ps1 | Add-Content -Path Copy-MTPFiles.psm1
           
-          Update-ModuleManifest -Path .\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yyMM.dd.HH.mm')
+          Update-ModuleManifest -Path .\src\Copy-MTPFiles.psd1 -ModuleVersion (Get-Date -Format 'yyMM.dd.HH.mm')
           
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v3
@@ -33,8 +34,8 @@ jobs:
           name: Copy-MTPFiles
           path: |
             Copy-MTPFiles.psm1
-            Copy-MTPFiles.psd1
-            MTPFileFormat.ps1xml
+            .\src\Copy-MTPFiles.psd1
+            .\src\MTPFileFormat.ps1xml
 
       - name: Download Build Artifact
         uses: actions/download-artifact@v3
