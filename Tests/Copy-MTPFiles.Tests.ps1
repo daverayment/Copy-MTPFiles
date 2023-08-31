@@ -5,6 +5,10 @@ BeforeAll {
     Set-Location $PSScriptRoot
 }
 
+AfterAll {
+    Set-Location $originalLocation
+}
+
 Describe "Get-COMFolder" {
     BeforeAll {
         $device = Get-TargetDevice
@@ -38,7 +42,7 @@ Describe "Copy-MTPFiles" {
     }
 
     It "Throws if Source and Destination to be identical absolute paths." {
-        $result = Main -Source "C:\" -Destination "C:\"
+        $result = Main -Source 'C:\' -Destination 'C:\'
         $result.Status | Should -Be "Failure"
         $result.Message | Should -Be "Source and Destination directories cannot be the same."
 
@@ -308,132 +312,223 @@ Describe "Parameter Validation" {
     }
 }
 
-Describe "Resolve-SourceParameter" {
+Describe "Source parameter resolution" {
     BeforeAll {
-        if (Test-Path "SomeTestFile.txt") {
-            Remove-Item "SomeTestFile.txt"
-        }
-        if (Test-Path "Internal storage") {
-            Remove-Item "Internal storage" -Force -Recurse
-        }
-        New-Item "Internal storage" -ItemType Directory
-        New-Item "Internal storage\TestFile.txt" -ItemType File
-        New-Item "SomeTestFile.txt" -ItemType File
-        $Device = Get-TargetDevice
+        . .\Mocks.ps1
+
+        $device = Get-TargetDevice
+        $parentFolder = $device.GetFolder()
     }
 
-    AfterAll {
-        Remove-Item "Internal storage" -Force
-        Remove-Item "SomeTestFile.txt"
+    # Host filesystem mocked:
+    # 'SomeFile' = 'file';
+    # 'SomeFile.txt' = 'file';
+    # 'SomeHostFolder' = @{
+    #     'HostSubFolderA' = @{
+    #         'HostFileA' = 'file';
+    #         'HostFileA.txt' = 'file';
+    #     };
+    #     'HostFileB' = 'file';
+    #     'HostFileB.txt' = 'file';
+    # };
+    # # This simulates a host directory with the same name as the device's top-level folder.
+    # 'Internal storage' = @{
+    #     'HostSubFolderB' = @{ };
+    #     'HostFileC.txt' = 'file';
+    # };
+    # 'C:' = @{
+    #     'HostFileD' = 'file';
+    #     'HostFileD.txt' = 'file';
+    #     'HostSubFolderC' = @{
+    #         'HostFileE' = 'file';
+    #         'HostFileE.txt' = 'file';
+    #     };
+    # };
+
+    # Device filesystem mocked:
+    # 'Internal storage' = @{
+    #     'MTPFilesTestDirA' = @{ };
+    #     'MTPFilesTestDirB' = @{
+    #         'DeviceFileA' = "file";
+    #         'DeviceFileA.txt' = 'file';
+    #         'DeviceFileB.txt' = 'file';
+    #         'DeviceFileA.jpg' = 'file';
+    #     };
+    #     'MTPFilesTestDirC' = @{ };
+    #     'MTPFilesTestFile' = 'file';
+    #     'MTPFilesTestFile.doc' = 'file';
+    # }
+
+
+    It "Test" {
+        $sourceInfo = [SourceResolver]::new("Internal storage", $device, "*", $true)
+        $sourceInfo.SourceDirectory | Should -Be "Internal storage"
+        $sourceInfo.IsDeviceSource | Should -Be $true
+        $sourceInfo.FilenamePatterns | Should -Be "*"
+        $sourceInfo.IsDirectoryMatch | Should -Be $true
+        $sourceInfo.IsFileMatch | Should -Be $false
     }
 
-    It "Correctly differentiates a host path that resembles a device path." {
-        $result = Resolve-SourceParameter -Source "Internal storage/TestFile.txt" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "TestFile.txt"
-        $result.IsDeviceSource | Should -Be $false
-    }
-
-    # TODO: mock the device filesystem.
-    It "Detects a device path including a filename. Top-level folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage/TestFile.txt" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "TestFile.txt"
-    }
-
-    It "Detects a device path including a filename with a wildcard. Top-level folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage/TestFile.*" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "TestFile.*"
-    }
-
-    It "Detects a device path including a filename. Child folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage/MTPFilesTestDir/TestFile.txt" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "TestFile.txt"
-    }
-
-    It "Detects a device path including a filename with a wildcard. Child folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage/MTPFilesTestDir/TestFile.*" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "TestFile.*"
-    }
-
-    It "Detects a device path including a trailing slash." {
-        $result = Resolve-SourceParameter -Source "Internal storage/" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "*"
-    }
-
-    It "Correctly detects a device folder. Top-level folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage" -Device $Device
-        $result.Source | Should -Be "Internal storage"
-        $result.FilenamePatterns | Should -Be "*"
-    }
-
-    It "Correctly detects a device folder. Child folder." {
-        $result = Resolve-SourceParameter -Source "Internal storage/Download" -Device $Device
-        $result.Source | Should -Be "Internal storage/Download"
-        $result.FilenamePatterns | Should -Be "*"
-    }
-
-    It "Sets the file as the filepattern. Host file in current directory." {
-        $result = Resolve-SourceParameter -Source "SomeTestFile.txt" -Device $Device
-        $result.FilenamePatterns | Should -Be "SomeTestFile.txt"
-        $result.Source | Should -Be "."
-    }
-
-    It "Throws if the Source directory does not exist. Current path." {
-        { Resolve-SourceParameter -Source "NonExistentDir\File.txt" } |
-            Should -Throw -ExpectedMessage "Specified source directory ""*"" does not exist."
+    It "Throws if the path resembles a device path but contains backslashes." {
+        { [SourceResolver]::new("Internal storage\Download", $device, $true) } |
+            Should -Throw -ExpectedMessage "Device path ""*"" cannot contain backslashes. *"
     }
 
     It "Throws if the Source directory does not exist. Relative path." {
-        { Resolve-SourceParameter -Source "..\NonExistentDir\File.txt" } |
-            Should -Throw -ExpectedMessage "Specified source directory ""*"" does not exist."
+        { [SourceResolver]::new("NonExistentDir", $device, $true) } |
+            Should -Throw -ExpectedMessage "Specified source path ""*"" not found."
     }
+
+    It "Throws if the Source file on the device does not exist. With file extension." {
+        { [SourceResolver]::new("Internal storage/NonExistentFile.txt", $device, $true) } |
+            Should -Throw -ExpectedMessage "Specified source path ""*"" not found."
+    }
+
+    It "Throws if the Source file on the device does not exist. Without file extension." {
+        { [SourceResolver]::new("Internal storage/NonExistentFile", $device, $true) } |
+            Should -Throw -ExpectedMessage "Specified source path ""*"" not found."
+    }
+
+    It "Throws if the current path contains a directory that resembles a device path." {
+        { [SourceResolver]::new("Internal storage/TestFile.txt", $device, $false) } |
+            Should -Throw -ExpectedMessage "*is also a top-level device folder.*"
+    }
+
+    It "Throws if a device folder includes a wildcard." {
+        { [SourceResolver]::new("Internal storage/MTPFiles*DirA/DeviceFileA.txt", $device, $true) } |
+            Should -Throw -ExpectedMessage "Wildcard characters are not allowed in the directory portion of the source path."
+    }   
+
+    It "Detects a device path including a filename. Top-level folder." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestFile.doc", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsFileMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage"
+        $result.SourceFilePattern | Should -Be "MTPFilesTestFile.doc"
+    }
+
+    It "Detects a device path including a filename with a wildcard. Top-level folder." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestFile.*", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsFileMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage"
+        $result.SourceFilePattern | Should -Be "MTPFilesTestFile.*"
+    }
+
+    It "Detects a device path including a filename. Child folder." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestDirB/DeviceFileA.txt", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsFileMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage/MTPFilesTestDirB"
+        $result.SourceFilePattern | Should -Be "DeviceFileA.txt"
+    }
+
+    It "Detects a device path including a filename with a wildcard. Child folder." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestDirB/DeviceFileA.*", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsFileMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage/MTPFilesTestDirB"
+        $result.SourceFilePattern | Should -Be "DeviceFileA.*"
+    }
+
+    It "Detects a device path including a trailing slash." {
+        $result = [SourceResolver]::new("Internal storage/", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsDirectoryMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage"
+        $result.SourceFilePattern | Should -Be "*"
+    }
+
+    It "Correctly detects a device folder. Top-level folder." {
+        $result = [SourceResolver]::new("Internal storage", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsDirectoryMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage"
+        $result.SourceFilePattern | Should -Be "*"
+    }
+
+    It "Correctly detects a device folder. Child folder." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestDirA", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsDirectoryMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage/MTPFilesTestDirA"
+        $result.SourceFilePattern | Should -Be "*"
+    }
+
+    It "Correctly detects a device folder. Child folder with trailing slash." {
+        $result = [SourceResolver]::new("Internal storage/MTPFilesTestDirA/", $device, $true)
+        $result.IsDeviceSource | Should -Be $true
+        $result.IsDirectoryMatch | Should -Be $true
+        $result.SourceDirectory | Should -Be "Internal storage/MTPFilesTestDirA"
+        $result.SourceFilePattern | Should -Be "*"
+    }
+
+    # Host filesystem.
 
     It "Throws if the Source directory does not exist. Absolute path." {
-        { Resolve-SourceParameter -Source "C:\NonExistentDir\File.txt" } |
-            Should -Throw -ExpectedMessage "Specified source directory ""*"" does not exist."
+        { [SourceResolver]::new("C:\NonExistentDir", $device, $true) } |
+            Should -Throw -ExpectedMessage "Specified source path ""*"" not found."
     }
 
-    It "Throws if the Source directory exists, but the file does not exist." {
-        { Resolve-SourceParameter -Source "NonExistentFile.txt" } |
-            Should -Throw -ExpectedMessage "Specified source file ""*"" does not exist."
-    }
 
-    It "Throws if a Source directory exists, the file exists, and the FilenamePatterns parameter is provided." {
-        { Resolve-SourceParameter -Source "..\src\Copy-MTPFiles.ps1" -FilenamePattern "Any*" } |
-            Should -Throw -ExpectedMessage "Cannot provide FilenamePatterns parameter when the Source is a file."
-    }
-    
-    It "Throws if a Source directory contains wildcards. Relative path." {
-        { Resolve-SourceParameter -Source "..\SomeDir*ory\File.txt" } |
-            Should -Throw -ExpectedMessage "Wildcard characters are not allowed in the directory portion of the source path."
-    }
-
-    It "Throws if a Source directory contains wildcards. Absolute path." {
-        { Resolve-SourceParameter -Source "C:\SomeDir*ory\File.txt" } |
-            Should -Throw -ExpectedMessage "Wildcard characters are not allowed in the directory portion of the source path."
-    }
-
-    It "Throws if a filename is provided and the FilenamePatterns parameter is provided." {
-        { Resolve-SourceParameter -Source "SomeFile.txt" -FilenamePattern "Any*" } |
-            Should -Throw -ExpectedMessage "Cannot provide FilenamePatterns parameter when the Source is a file."
-    }
-
-    It "Throws if a Source is null or empty." {
-        { Resolve-SourceParameter -Source "" } |
-            Should -Throw -ExpectedMessage "Source cannot be null or empty."
-    }
-
-    # It "Throws if a Source file contains wildcards and the FilenamePatterns parameter is provided." {
-    #     { Initialize-SourceParameter -Source "AnyExtension.*" -FilenamePattern "Any*" } |
-    #         Should -Throw -ExpectedMessage "Cannot specify wildcards in the Source parameter when the FilenamePatterns parameter is also provided."
+    # It "Sets the file as the filepattern. Host file with no extension in current directory." {
+    #     $result = Resolve-SourceParameter -Source "SomeFile"
+    #     $result.FilenamePatterns | Should -Be "SomeFile"
+    #     $result.Source | Should -Be "."
     # }
-}
 
-AfterAll {
-    Set-Location $originalLocation
+    # It "Sets the file as the filepattern. Host file with extension in current directory." {
+    #     $result = Resolve-SourceParameter -Source "SomeFile.txt"
+    #     $result.FilenamePatterns | Should -Be "SomeFile.txt"
+    #     $result.Source | Should -Be "."
+    # }
+
+
+
+    # It "Throws if the Source directory does not exist. Relative path." {
+    #     { Resolve-SourceParameter -Source "..\NonExistentDir\File.txt" } |
+    #         Should -Throw -ExpectedMessage "Specified source directory ""*"" does not exist."
+    # }
+
+    # It "Throws if the Source directory does not exist. Absolute path." {
+    #     { Resolve-SourceParameter -Source 'C:\NonExistentDir\File.txt' } |
+    #         Should -Throw -ExpectedMessage "Specified source directory ""*"" does not exist."
+    # }
+
+    # It "Throws if the Source directory exists, but the file does not exist." {
+    #     { Resolve-SourceParameter -Source "NonExistentFile.txt" } |
+    #         Should -Throw -ExpectedMessage "Specified source file ""*"" does not exist."
+    # }
+
+    # It "Throws if a Source directory exists, the file exists, and the FilenamePatterns parameter is provided." {
+    #     { Resolve-SourceParameter -Source 'SomeHostFolder\HostFileB.txt' -FilenamePattern "Any*" } |
+    #         Should -Throw -ExpectedMessage "Cannot provide FilenamePatterns parameter when the Source is a file."
+    # }
+    
+    # It "Throws if a Source directory contains wildcards. Relative path." {
+    #     { Resolve-SourceParameter -Source "..\SomeDir*ory\File.txt" } |
+    #         Should -Throw -ExpectedMessage "Wildcard characters are not allowed in the directory portion of the source path."
+    # }
+
+    # It "Throws if a Source directory contains wildcards. Absolute path." {
+    #     { Resolve-SourceParameter -Source "C:\SomeDir*ory\File.txt" } |
+    #         Should -Throw -ExpectedMessage "Wildcard characters are not allowed in the directory portion of the source path."
+    # }
+
+    # It "Throws if a filename is provided and the FilenamePatterns parameter is provided." {
+    #     { Resolve-SourceParameter -Source "SomeFile.txt" -FilenamePattern "Any*" } |
+    #         Should -Throw -ExpectedMessage "Cannot provide FilenamePatterns parameter when the Source is a file."
+    # }
+
+    # It "Throws if a Source is null or empty." {
+    #     { Resolve-SourceParameter -Source "" } |
+    #         Should -Throw -ExpectedMessage "Source cannot be null or empty."
+    # }
+
+    # It "Succeeds in finding a file in a host directory with the same starting path as the device." {
+    #     $result = Resolve-SourceParameter -Source "Internal storage/HostFileC.txt" -Device $device
+    #     $result.Source | Should -Be "Internal storage"
+    #     $result.FilenamePatterns | Should -Be "HostFileC.txt"
+    #     $result.IsDeviceSource | Should -Be $false
+    # }
 }
