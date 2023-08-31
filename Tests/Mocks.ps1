@@ -16,6 +16,8 @@ $MockDeviceFileSystem = @{
 
 # This represents the host filesystem, relative to the current directory.
 $MockHostFileSystem = @{
+    'SomeFile' = 'file';
+    'SomeFile.txt' = 'file';
     'SomeHostFolder' = @{
         'HostSubFolderA' = @{
             'HostFileA' = 'file';
@@ -66,12 +68,14 @@ function Get-MockedItem {
         IsFolder = $currentItem -is [hashtable]
         Name     = if ($pathSections) { $pathSections[-1] } else { "/" }
         Item     = $currentItem
+        Path     = $Path
     }
 
     $itemObj | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { return $this }
     $itemObj | Add-Member -MemberType ScriptMethod -Name ParseName `
         -Value (Set-ParseNameMethod -Path $Path -Function ${function:Get-MockedItem} -FileSystem $FileSystem)
     
+    #Write-Host "Path: $($itemObj.Path)"
     return $itemObj
 }
 
@@ -114,7 +118,7 @@ Mock Get-TargetDevice {
 
 Mock Get-IsDevicePath -RemoveParameterType 'Device' {
     # Get the first segment of the path.
-    $topLevelPath = $Path.Split('/', [StringSplitOptions]::RemoveEmptyEntries)[0]
+    $topLevelPath = $Path.Replace('\', '/').Split('/', [StringSplitOptions]::RemoveEmptyEntries)[0]
     # Is it one of the mocked top-level folders?
     $matched = @($MockDeviceFileSystem.Keys | `
         Where-Object { $_ -ceq $topLevelPath }).Count -gt 0
@@ -123,15 +127,29 @@ Mock Get-IsDevicePath -RemoveParameterType 'Device' {
 }
 
 Mock Get-MTPIterator -RemoveParameterType 'ParentFolder' {
-    # If a parent folder has been provided, prepend it.
+    $sections = $Path.Replace('\', '/').Split('/', [StringSplitOptions]::RemoveEmptyEntries)
+
+    $currentItem = $null
+
     if ($ParentFolder -and $ParentFolder.Path) {
-        $Path = Join-Path -Path $ParentFolder.Path -ChildPath $Path
-        # Join-Path normalises path separators to backslashes, so revert to device path
-        # separators, which the other mocks use.
-        $Path = $Path.Replace('\', '/')
+        # Start from the parent folder, if it has been supplied.
+        $currentItem = Get-MockedItem -Path $ParentFolder.Path.Replace('\', '/') -FileSystem $MockDeviceFileSystem
+    } else {
+        # Otherwise start from the root.
+        $currentItem = Get-MockedItem -Path "/" -FileSystem $MockDeviceFileSystem
     }
 
-    $mockedItem = Get-MockedItem -Path $Path -FileSystem $MockFileSystem
+    foreach ($section in $sections) {
+        $nextPath = Join-Path -Path $currentItem.Path -ChildPath $section
+        $nextItem = Get-MockedItem -Path $nextPath.Replace('\', '/') -FileSystem $MockDeviceFileSystem
 
-    return $mockedItem
+        # Output the item (or $null if it wasn't found).
+        $nextItem
+
+        if (-not $nextItem -or -not $nextItem.IsFolder) {
+            break
+        }
+
+        $currentItem = $nextItem
+    }
 }
