@@ -15,7 +15,7 @@ This PowerShell script allows you to transfer files to or from a portable device
 - [License](#license)
 
 ## Prerequisites
-The script relies on COM and so only works on Windows machines. PowerShell 5.1 (included in Windows 10) or later is required to run the script. It may work on earlier versions, but has not been tested on them.
+The script relies on COM and so only works on Windows machines. PowerShell 5.1 (included in Windows 10) or later is required to run the script.
 
 ## Installation
 To install the `Copy-MTPFiles` PowerShell module, follow these steps:
@@ -143,4 +143,4 @@ Before you submit your Pull Request, please ensure the following:
 Thank you for your help!
 
 ## License
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
