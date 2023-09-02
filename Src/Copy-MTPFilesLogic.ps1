@@ -5,6 +5,8 @@ if (Get-Module MTPDevice) {
 }
 Import-Module "$PSScriptRoot\MTPDevice.psm1"
 
+# Source resolution and validation.
+. "$PSScriptRoot\SourceResolver.ps1"
 # Ancillary functions.
 . "$PSScriptRoot\Copy-MTPFilesFunctions.ps1"
 
@@ -162,116 +164,6 @@ function Clear-WorkingEnvironment {
 	}
 }
 
-# Validate the Source parameter and perform any necessary pre-processing for path and wildcards.
-function Resolve-SourceParameter {
-	[CmdletBinding()]
-	param(
-		[Parameter(Mandatory = $true)]
-		[string]$Source,
-		[string[]]$FilenamePatterns = "*",
-		[System.__ComObject]$Device = $null
-	)
-
-	$isDeviceSource = $false
-
-	if ($Device) {
-		# Does the first part of the source look like a device path?
-		$isDeviceSource = Get-IsDevicePath -Path $Source -Device $Device
-
-		if ($isDeviceSource) {
-			# Split the path string into segments and also retrieve the matching folders on the device.
-			$sections = $Source.Split("/")
-			$folders = @(Get-MTPIterator -ParentFolder $Device.GetFolder() -Path $Source)
-
-			# A valid path will have the same number of folders returned as there are path string segments.
-			if ($folders.Length -eq $sections.Length) {
-				if ($null -eq $folders[-1]) {
-					# The last part of the path didn't match a folder, so assume it is a file.
-					$sourceDir = (Split-Path $Source -Parent).Replace('\', '/')
-					$sourceFilePattern = Split-Path $Source -Leaf
-				} else {
-					# The entire path has been found as folders on the device.
-					$sourceDir = $sections -join '/'
-					$sourceFilePattern = $FilenamePatterns
-				}
-			} else {
-				# Could not iterate through the whole path.
-				# Niche case: is there a host directory with the same path?
-				if (Test-Path -Path $Source) {
-					$isDeviceSource = $false
-				} else {
-					# The source must exist but cannot be found on the device.
-					Write-Error "Specified source path ""$Source"" does not exist." -ErrorAction Stop `
-						-Category ObjectNotFound
-				}
-			}
-		}
-	}
-
-	# Host-specific processing.
-	if (-not $isDeviceSource) {
-		$sourceDir = Split-Path $Source -Parent
-		$sourceFilePattern = Split-Path $Source -Leaf
-	
-		if (-not $sourceDir) {
-			$sourceDir = "."
-		}
-	}
-
-	# Check for wildcards in the directory part of the source path.
-	if ($sourceDir -match "\*|\?") {
-		Write-Error "Wildcard characters are not allowed in the directory portion of the source path." `
-			-ErrorAction Stop -Category InvalidArgument
-	}
-
-	if (-not $isDeviceSource) {
-		# NB: we do not need to do a check for the device here because it has already been done above.
-		if (-not (Test-Path -Path $sourceDir)) {
-			Write-Error "Specified source directory ""$sourceDir"" does not exist." -ErrorAction Stop `
-				-Category ObjectNotFound
-		}		
-	}
-
-	# At this point, we know that the folders part of the source path is valid.
-
-	# Process wildcards or specific file in the source path.
-	if (($sourceFilePattern -match "\*|\?")) {
-		if ($FilenamePatterns -ne "*") {
-			Write-Error ("Cannot specify wildcards in the Source parameter when the FilenamePatterns " +
-				"parameter is also provided.") -ErrorAction Stop -Category InvalidArgument
-		}
-	} else {
-		# $sourceFilePattern should contain the exact filename we're looking for.
-		if ($isDeviceSource) {
-			$lastFolder = if ($null -eq $folders[-1]) { $folders[-2] } else { $folders[-1] }
-
-			if ($lastFolder.ParseName($sections[-1])) {
-				$fileExists = $true
-			}
-		} else {
-			$fileExists = Test-Path -Path $Source -PathType Leaf
-		}
-
-		if ($FilenamePatterns -ne "*" -and $fileExists) {
-			# We do not allow wildcard patterns when the source resolves to a single file.
-			Write-Error "Cannot provide FilenamePatterns parameter when the Source is a file." `
-				-ErrorAction Stop -Category InvalidArgument
-		}
-
-		# If the source path refers to a single file, it must exist.
-		if (-not $fileExists) {
-			Write-Error "Specified source file ""$Source"" does not exist." -ErrorAction Stop `
-				-Category ObjectNotFound
-		}
-	}
-
-	return [PSCustomObject]@{
-		Source = $sourceDir
-		FilenamePatterns = $sourceFilePattern
-		IsDeviceSource = $isDeviceSource
-	}
-}
-
 function Test-EmptyParameterList {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -302,6 +194,7 @@ function Get-DeviceList {
 		}
 	}
 }
+
 
 function Main {
 	[CmdletBinding(SupportsShouldProcess)]
@@ -360,6 +253,9 @@ function Main {
 		}
 
 		# We need to do source path validation and set up before any transfers.
+		$sourceInfo = [SourceResolver]::new($Source, $device, $FilenamePatterns, $false)
+		$sourceInfo
+return
 		$sourceInfo = Resolve-SourceParameter -Source $Source -FilenamePatterns $FilenamePatterns -Device $device
 		$Source = $sourceInfo.Source
 		$FilenamePatterns = $sourceInfo.FilenamePatterns

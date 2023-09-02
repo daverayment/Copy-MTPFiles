@@ -1,38 +1,51 @@
 class SourceResolver {
 	[string]$Source
-	[bool]$IsDeviceSource
+	[bool]$IsDeviceSource = $false
 	[Object]$Device
 	[string[]]$FilenamePatterns
-	[bool]$SkipSameFolderCheck
+	[bool]$SkipSameFolderCheck = $false
 	[string[]]$SourceSegments
 	[Object[]]$MatchedFolders
 	[string]$SourceDirectory
 	[string]$SourceFilePattern
-	[bool]$IsFileMatch
-	[bool]$IsDirectoryMatch
+	[bool]$IsFileMatch = $false
+	[bool]$IsDirectoryMatch = $false
 
+	# SourceResolver constructor which defaults $FilenamePatterns to "*" and $SkipSameFolderCheck to $false.
 	SourceResolver([string]$Source, [Object]$Device) {
 		$this.Initialise($Source, $Device, "*", $false)
 	}
 
+	# SourceResolver constructor which defaults $FilenamePatterns to "*".
 	SourceResolver([string]$Source, [Object]$Device, [bool]$SkipSameFolderCheck)
 	{
 		$this.Initialise($Source, $Device, "*", $SkipSameFolderCheck)
 	}
 
+	# SourceResolver constructor which defaults $SkipSameFolderCheck to $false.
 	SourceResolver([string]$Source, [Object]$Device, [string[]]$FilenamePatterns) {
 		$this.Initialise($Source, $Device, $FilenamePatterns, $false)
 	}
 
+	# SourceResolver constructor which allows all parameters to be set.
 	SourceResolver([string]$Source, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
 		$this.Initialise($Source, $Device, $FilenamePatterns, $SkipSameFolderCheck)
 	}
 
 	hidden [void] Initialise([string]$Source, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
-		$this.Source = $Source.Trim('/')
+		$this.Source = $Source.Trim().Trim('/')
 		$this.Device = $Device
 		$this.FilenamePatterns = $FilenamePatterns
 		$this.SkipSameFolderCheck = $SkipSameFolderCheck
+
+		if ($null -eq $this.Source -or $this.Source.Length -eq 0) {
+			throw "Source cannot be null or empty."
+		}
+
+		# The user likely intends to want to match all files in the current directory.
+		if ($this.Source -eq "*") {
+			$this.Source = "."
+		}
 
 		$this.IsDeviceSource = Get-IsDevicePath -Path $this.Source -Device $this.Device
 
@@ -77,11 +90,18 @@ class SourceResolver {
 				$this.SourceFilePattern = Split-Path $this.Source -Leaf
 				$this.IsFileMatch = $true
 			}
-		}	
+		} else {
+			$allButLast = $this.SourceSegments[0..($this.SourceSegments.Length - 2)]
+			$wildcardMatches = $allButLast | Where-Object { $_ -match "[*?]" }
+			if ($wildcardMatches) {
+				$this.ReportWildcardInDirectoryError()
+			}
+		}
 	}
 
 	hidden [void] ResolveHostSource() {
 		$normalisedPath = [IO.Path]::GetFullPath($this.Source)
+
 		if (Test-Path $normalisedPath) {
 			$this.IsFileMatch = (Test-Path $normalisedPath -PathType Leaf)
 			$this.IsDirectoryMatch = (Test-Path $normalisedPath -PathType Container)
@@ -94,18 +114,22 @@ class SourceResolver {
 
 			$this.SourceDirectory = if ($this.IsFileMatch) { Split-Path $normalisedPath -Parent } else { $normalisedPath }
 			$this.SourceFilePattern = if ($this.IsFileMatch) { Split-Path $normalisedPath -Leaf } else { $this.FilenamePatterns }
+
+			# Check for wildcards in the directory part of the source path.
+			if ($this.SourceDirectory -match "[*?]") {
+				$this.ReportWildcardInDirectoryError()
+			}
 		}
+	}
+
+	hidden [void] ReportWildcardInDirectoryError() {
+		Write-Error "Wildcard characters are not allowed in the directory portion of the source path." `
+			-ErrorAction Stop -Category InvalidArgument
 	}
 
 	hidden [void] ValidationChecks() {
 		if (-not $this.IsFileMatch -and -not $this.IsDirectoryMatch) {
 			Write-Error "Specified source path `"$($this.Source)`" not found." -ErrorAction Stop -Category ObjectNotFound
-		}
-
-		# Check for wildcards in the directory part of the source path.
-		if ($this.SourceDirectory -match "\*|\?") {
-			Write-Error "Wildcard characters are not allowed in the directory portion of the source path." `
-				-ErrorAction Stop -Category InvalidArgument
 		}
 
 		if (-not $this.IsDeviceSource) {
@@ -139,7 +163,8 @@ class SourceResolver {
 					$fileExists = $true
 				}
 			} else {
-				$fileExists = Test-Path -Path $this.Source -PathType Leaf
+				$normalisedPath = [IO.Path]::GetFullPath($this.Source)
+				$fileExists = $(Test-Path -Path $normalisedPath -PathType Leaf)
 			}
 
 			if ($fileExists) {

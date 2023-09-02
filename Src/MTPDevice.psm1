@@ -216,7 +216,7 @@ function Get-IsDevicePath {
 
 	if ($null -ne $Device) {
 		# Ensure path has a trailing slash for exact folder matching.
-		$normalisedPath = $Path.TrimEnd('/') + "/"
+		$normalisedPath = $Path.Replace('\', '/').TrimEnd('/') + "/"
 
 		foreach ($item in @($Device.GetFolder().Items())) {
 			if ($normalisedPath -ilike ("{0}/*" -f $item.Name)) {
