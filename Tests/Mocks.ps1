@@ -96,20 +96,50 @@ function Set-ParseNameMethod {
     }.GetNewClosure()
 }
 
+# Capture the script location because Pester runs in a different scope.
+$BasePath = Split-Path $PSScriptRoot -Parent
+
 # Test a path against our mock host filesystem instead of the host itself.
 Mock Test-Path {
+    param([string]$Path, [string]$PathType)
+
+    # Remove the script root from the path, turning it into a relative path.
+    $Path = $Path.Replace($BasePath, "")
+    if ($Path -eq "" -and $PathType -ne "Leaf") {
+        # The path is the base path, so it's a valid container path.
+        return $true
+    }
+
     $segments = $Path.Trim('\').Split('\', [StringSplitOptions]::RemoveEmptyEntries)
     $currentItem = $MockHostFileSystem
 
-    foreach ($segment in $segments) {
-        if ($currentItem -is [hashtable] -and $currentItem.ContainsKey($segment)) {
-            $currentItem = $currentItem[$segment]
-        } else {
+    function Test-PathRecursive {
+        param([hashtable]$Item, [string[]] $RemainingSegments, [string]$PathType)
+
+        $segment = $RemainingSegments[0]
+        $matchingKeys = $Item.Keys | Where-Object { $_ -like $segment }
+        if (-not $matchingKeys) {
             return $false
+        }
+
+        foreach ($key in $matchingKeys) {
+            $nextItem = $Item[$key]
+
+            if ($RemainingSegments.Length -eq 1) {
+                # Last segment.
+                switch ($PathType) {
+                    'Leaf' { return $nextItem -eq 'file' }
+                    'Container' { return $nextItem -is [hashtable] }
+                    Default { return $true }
+                }
+            } elseif ($nextItem -is [hashtable]) {
+                # Next segment is a folder. Recurse.
+                return (Test-PathRecursive -Item $nextItem -RemainingSegments @($RemainingSegments[1..($RemainingSegments.Length - 1)]) -PathType $PathType)
+            }
         }
     }
 
-    return $true            
+    return Test-PathRecursive -Item $currentItem -RemainingSegments $segments -PathType $PathType
 }
 
 Mock Get-TargetDevice {
@@ -117,6 +147,10 @@ Mock Get-TargetDevice {
 }
 
 Mock Get-IsDevicePath -RemoveParameterType 'Device' {
+    if ($null -eq $Device) {
+        return $false
+    }
+
     # Get the first segment of the path.
     $topLevelPath = $Path.Replace('\', '/').Split('/', [StringSplitOptions]::RemoveEmptyEntries)[0]
     # Is it one of the mocked top-level folders?
