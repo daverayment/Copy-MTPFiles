@@ -70,14 +70,17 @@ function Confirm-HostDirectoryExists {
 function Get-HostCOMFolder {
 	param(
 		[Parameter(Mandatory = $true)]
-		[string]$DirectoryPath
+		[string]$DirectoryPath,
+		[switch]$CreateIfNotExists
 	)
 
-	Confirm-HostDirectoryExists -DirectoryPath $DirectoryPath
+	if ($CreateIfNotExists) {
+		Confirm-HostDirectoryExists -DirectoryPath $DirectoryPath
+	}
 	return (Get-ShellApplication).NameSpace([IO.Path]::GetFullPath($DirectoryPath))
 }
 
-# Retrieves a COM reference to a host or device directory.
+# Retrieves a COM reference to a host or device directory, creating the path if required.
 function Get-COMFolder {
 	[CmdletBinding(SupportsShouldProcess)]
 	param(
@@ -85,17 +88,20 @@ function Get-COMFolder {
 		[ValidateNotNullOrEmpty()]
 		[string]$Path,
 
-		[System.__ComObject]$Device
+		[Object]$Device,
+		# [System.__ComObject]$Device
+
+		[switch]$CreateIfNotExists
 	)
 
 	if (Test-IsHostDirectory -DirectoryPath $Path) {
-		return Get-HostCOMFolder -DirectoryPath $Path
+		return Get-HostCOMFolder -DirectoryPath $Path -CreateIfNotExists:$CreateIfNotExists
 	} else {
 		# Retrieve the root folder of the attached device.
 		$deviceRoot = (Get-ShellApplication).Namespace($Device.Path)
 
 		# Return a reference to the requested path on the device.
-		return Get-DeviceCOMFolder -ParentFolder $deviceRoot -FolderPath $Path
+		return Get-DeviceCOMFolder -ParentFolder $deviceRoot -FolderPath $Path -CreateIfNotExists:$CreateIfNotExists
 	}
 }
 

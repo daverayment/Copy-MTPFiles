@@ -123,6 +123,8 @@ function Get-MTPIterator {
 		[ValidateNotNullOrEmpty()]
 		[string]$Path,
 
+		[switch]$CreateIfNotExists,
+
 		[switch]$ShowProgress
 	)
 
@@ -143,7 +145,15 @@ function Get-MTPIterator {
 
 		# Break iteration if the next folder could not be found.
 		if (($null -eq $item) -or (-not $item.IsFolder)) {
-			break
+			if ($CreateIfNotExists) {
+				$ParentFolder.NewFolder($section)
+				$item = $ParentFolder.ParseName($section)
+				if ($null -eq $item) {
+					Write-Error "Could not create folder ""$section""." -ErrorAction Stop -Category ObjectNotFound
+				}
+			} else {
+				break
+			}
 		}
 
 		# Keep iterating through the folder structure.
@@ -164,7 +174,9 @@ function Get-DeviceCOMFolder {
 
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[string]$FolderPath
+		[string]$FolderPath,
+
+		[switch]$CreateIfNotExists
 	)
 
 	# Get the last folder in the path.
@@ -228,4 +240,4 @@ function Get-IsDevicePath {
 	return $false
 }
 
-Export-ModuleMember -Function Get-MTPIterator, Get-IsDevicePath, Get-MTPDevice, Get-TargetDevice, Get-COMFolder, Get-DeviceCOMFolder, Get-ShellApplication, Remove-ShellApplication
+Export-ModuleMember -Function Get-MTPIterator, Get-IsDevicePath, Get-MTPDevice, Get-TargetDevice, Get-DeviceCOMFolder, Get-ShellApplication, Remove-ShellApplication
