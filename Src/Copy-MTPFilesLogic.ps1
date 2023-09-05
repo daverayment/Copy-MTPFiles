@@ -49,7 +49,7 @@ function Set-TransferObject {
 
 # Check script parameters and setup script-level variables for source, destination and temporary directories.
 function Initialize-TransferEnvironment {
-	$script:SourceDetails = Set-TransferObject -Directory $Source -IsSource $true
+	# $script:SourceDetails = Set-TransferObject -Directory $Source -IsSource $true
 	$script:DestinationDetails = Set-TransferObject -Directory $DestinationDirectory
 
     # Output the source and destination path info.
@@ -180,6 +180,7 @@ function Test-EmptyParameterList {
 	return (-not $boundUserParams)
 }
 
+# Output a list of the connected MTP devices.
 function Get-DeviceList {
 	$devices = @(Get-MTPDevice)
 	if ($devices.Length -eq 0) {
@@ -233,7 +234,7 @@ function Main {
 	# Number of matched files transferred.
 	$numTransfers = 0
 
-	try {
+	# try {
 		if ($ListDevices) {
 			Get-DeviceList
 			return
@@ -252,26 +253,38 @@ function Main {
 			$Source = $ListFiles
 		}
 
-		# We need to do source path validation and set up before any transfers.
-		$sourceInfo = [SourceResolver]::new($Source, $device, $FilenamePatterns, $false)
-		$sourceInfo
-return
-		$sourceInfo = Resolve-SourceParameter -Source $Source -FilenamePatterns $FilenamePatterns -Device $device
-		$Source = $sourceInfo.Source
+		# We need to do source path validation and set up before any transfers or file listing.
+		# TODO: change back to $false after testing.
+		$sourceInfo = [SourceResolver]::new($Source, $device, $FilenamePatterns, $true)
+		$Source = $sourceInfo.SourceDirectory
 		$FilenamePatterns = $sourceInfo.FilenamePatterns
-
-		if ($PSBoundParameters.ContainsKey("ListFiles")) {
-			return Get-FileList -Path $ListFiles -Device $device -RegexPattern (Convert-WildcardsToRegex -Patterns $FilenamePatterns)
-		}
-		
-		return
-		
-		Reset-TemporaryDirectory
+		# $sourceInfo
 
 		# Now the regex can be built, which is needed for both transfers and ListFiles.
 		$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
 
-		Initialize-TransferEnvironment
+		if ($PSBoundParameters.ContainsKey("ListFiles")) {
+			return Get-FileList -Path $Source -Device $device -RegexPattern $regexPattern
+		}
+		
+		Reset-TemporaryDirectory
+
+		# Initialise the destination info.
+		$destination = $DestinationDirectory.Trim().TrimEnd('/').TrimEnd('\')
+		if (Test-IsHostDirectory -DirectoryPath $destination) {
+			$destination = Convert-PathToAbsolute -Path $destination -IsSource $false
+		}
+	
+		$destinationFolder = Get-COMFolder -Path $destination -Device $device -CreateIfNotExists $true
+	
+		if ($null -eq $destinationFolder -and $PSCmdlet.ShouldProcess($DestinationDirectory, "Directory error check")) {
+			Write-Error "Folder ""$DestinationDirectory"" could not be found or created." -ErrorAction Stop
+		}
+		Write-Debug "Found folder ""$DirectoryDestination""."
+
+		# Initialize-TransferEnvironment
+
+		return
 
 		# For moves, we store information about the source files for later deletion.
 		$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
@@ -334,18 +347,18 @@ return
 			FilesMatched = $numMatches
 			FilesTransferred = $numTransfers
 		}
-	}
-	catch {
-		$_.Exception | Out-File -FilePath ".\Error.log" -Append
+	# }
+	# catch {
+	# 	$_.Exception | Out-File -FilePath ".\Error.log" -Append
 
-		Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+	# 	Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
 
-		return [PSCustomObject]@{
-			Status = "Failure"
-			Message = $_.Exception.Message
-			ErrorCategory = $_.CategoryInfo.Category
-			FilesMatched = if (Test-Path variable:numMatches) { $numMatches } else { 0 }
-			FilesTransferred = if (Test-Path variable:numTransfers) { $numTransfers } else { 0 }
-		}
-	}
+	# 	return [PSCustomObject]@{
+	# 		Status = "Failure"
+	# 		Message = $_.Exception.Message
+	# 		ErrorCategory = $_.CategoryInfo.Category
+	# 		FilesMatched = if (Test-Path variable:numMatches) { $numMatches } else { 0 }
+	# 		FilesTransferred = if (Test-Path variable:numTransfers) { $numTransfers } else { 0 }
+	# 	}
+	# }
 }

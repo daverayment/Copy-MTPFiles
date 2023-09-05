@@ -9,6 +9,23 @@ AfterAll {
     Set-Location $originalLocation
 }
 
+Describe "Tests" {
+    BeforeAll {
+        . .\Mocks.ps1
+
+        $device = Get-TargetDevice
+        $parentFolder = $device.GetFolder()
+    }
+
+    It "Accepts current directory as list files source." {
+        $result = Main -ListFiles "."
+    }
+
+    It "Clears out the temporary directory." {
+        $result = Main -Source "." -Destination "Internal storage/SomeBackup"
+    }
+}
+
 Describe "Get-COMFolder" {
     BeforeAll {
         $device = Get-TargetDevice

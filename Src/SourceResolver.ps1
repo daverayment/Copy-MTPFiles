@@ -10,6 +10,7 @@ class SourceResolver {
 	[string]$SourceFilePattern
 	[bool]$IsFileMatch = $false
 	[bool]$IsDirectoryMatch = $false
+	[Object]$SourceFolder	# resolved COM folder for the Source
 
 	# SourceResolver constructor which defaults $FilenamePatterns to "*" and $SkipSameFolderCheck to $false.
 	SourceResolver([string]$Source, [Object]$Device) {
@@ -56,6 +57,8 @@ class SourceResolver {
 		}
 
 		$this.ValidationChecks()
+
+		$this.SourceFolder = Get-COMFolder -Path $this.SourceDirectory -Device $this.Device
 	}
 
 	hidden [void] ResolveDeviceSource() {
