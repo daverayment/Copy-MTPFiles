@@ -108,10 +108,10 @@ This example begins iteration at the device's root folder and progresses through
 caller.
 
 .NOTES
-- If a non-existent section of the path is encountered, or a file is encountered before the 
-  last section of the path, the iteration stops.
+- If the CreateIfNotExists switch is set, the function will attempt to create missing folders. Otherwise,
+  the iteration will stop.
 - It's the caller's responsibility to interpret the yielded item and check if it's a folder or a file.
-  The IsFolder property can be used for this purpose, if the item is non-null.
+  The IsFolder property can be used for this purpose, if the item is non-null. $null indicates a non-match.
 #>
 function Get-MTPIterator {
 	param(
@@ -121,6 +121,7 @@ function Get-MTPIterator {
 
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
+		[ValidatePattern('^[^\\]*$')]  # Ensure no backslashes
 		[string]$Path,
 
 		[switch]$CreateIfNotExists,
@@ -129,31 +130,39 @@ function Get-MTPIterator {
 	)
 
 	$sections = $Path.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+	$currentPath = ""
 
 	for ($i = 0; $i -lt $sections.Length; $i++) {
 		$section = $sections[$i]
+		$currentPath = Join-Path $currentPath $section
 
 		if ($ShowProgress) {
-			Write-Progress -Activity "Scanning device folders" -Status "Processing ""$section""" `
+			Write-Progress -Activity "Scanning device folders" -Status "Processing `"$currentPath`"" `
 				-PercentComplete (($i / $sections.Length) * 100)
 		}
 
-		$item = $ParentFolder.ParseName($section)
+		try {
+			$item = $ParentFolder.ParseName($section)
+		} catch {
+			Write-Error "Could not parse path `"$currentPath`". Ensure it's a valid path." -ErrorAction Stop -Category InvalidArgument
+		}
+
+		# If the section doesn't exist and CreateIfNotExists is set, create it.
+		if (($null -eq $item) -and $CreateIfNotExists) {
+			try {
+				$ParentFolder.NewFolder($section)
+				$item = $ParentFolder.ParseName($section)
+			} catch {
+				Write-Error "Could not create folder `"$section`"." -ErrorAction Stop
+			}
+		}
 
 		# Yield the item back to the caller ($null if the section could not be found).
 		$item
 
-		# Break iteration if the next folder could not be found.
+		# Stop iterating if the next folder could not be found.
 		if (($null -eq $item) -or (-not $item.IsFolder)) {
-			if ($CreateIfNotExists) {
-				$ParentFolder.NewFolder($section)
-				$item = $ParentFolder.ParseName($section)
-				if ($null -eq $item) {
-					Write-Error "Could not create folder ""$section""." -ErrorAction Stop -Category ObjectNotFound
-				}
-			} else {
-				break
-			}
+			break
 		}
 
 		# Keep iterating through the folder structure.
@@ -183,7 +192,7 @@ function Get-DeviceCOMFolder {
 	if ($FolderPath -eq '/') {
 		$result = $ParentFolder
 	} else {
-		$results = @(Get-MTPIterator -ParentFolder $ParentFolder -Path $FolderPath -ShowProgress)
+		$results = @(Get-MTPIterator -ParentFolder $ParentFolder -Path $FolderPath -ShowProgress -CreateIfNotExists:$CreateIfNotExists)
 		$result = $results[-1]
 	}
 
@@ -216,28 +225,15 @@ function Get-MTPFileIterator {
 	}
 }
 
-# Does the supplied string resemble a path on the device? This determines whether the beginning of a path
-# corresponds with a top-level device folder. Child folders are not considered.
-function Get-IsDevicePath {
+# Retrieve all top-level device folders for the attached device.
+function Get-TopLevelDeviceFolders {
 	param(
-		[Parameter(Mandatory = $true)]
-		[string]$Path,
-
-		[System.__ComObject]$Device = $null
+		[Object]$Device = $null
 	)
 
 	if ($null -ne $Device) {
-		# Ensure path has a trailing slash for exact folder matching.
-		$normalisedPath = $Path.Replace('\', '/').TrimEnd('/') + "/"
-
-		foreach ($item in @($Device.GetFolder().Items())) {
-			if ($normalisedPath -ilike ("{0}/*" -f $item.Name)) {
-				return $true
-			}
-		}
+		return $Device.GetFolder().Items() | Where-Object { $_.IsFolder }
 	}
-
-	return $false
 }
 
-Export-ModuleMember -Function Get-MTPIterator, Get-IsDevicePath, Get-MTPDevice, Get-TargetDevice, Get-DeviceCOMFolder, Get-ShellApplication, Remove-ShellApplication
+Export-ModuleMember -Function Get-MTPIterator, Get-MTPDevice, Get-TargetDevice, Get-DeviceCOMFolder, Get-TopLevelDeviceFolders, Get-ShellApplication, Remove-ShellApplication
