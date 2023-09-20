@@ -105,7 +105,7 @@ function Get-COMFolder {
 	}
 }
 
-# Retries a command until it succeeds or the maximum number of attempts is reached.
+# Retries a command until it succeeds or the maximum number of attempts is reached. With exponential backoff.
 function Invoke-WithRetry {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -113,7 +113,7 @@ function Invoke-WithRetry {
 
 		[int]$MaxAttempts = 3,
 
-		[int]$RetryDelay = 2	# seconds
+		[int]$RetryDelay = 1	# seconds
 	)
 
 	$currentAttempt = 0
@@ -128,7 +128,14 @@ function Invoke-WithRetry {
 			if ($currentAttempt -eq $MaxAttempts) {
 				throw
 			}
+
+			Write-Warning "Attempt $currentAttempt of $MaxAttempts failed. Retrying in $RetryDelay seconds."
 			Start-Sleep -Seconds $RetryDelay
+			$RetryDelay *= 2	# exponential backoff
+		}
+	}
+}
+
 function Test-HasWritePermission {
 	param(
 		[Parameter(Mandatory = $true)]
