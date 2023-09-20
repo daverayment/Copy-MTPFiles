@@ -129,81 +129,27 @@ function Invoke-WithRetry {
 				throw
 			}
 			Start-Sleep -Seconds $RetryDelay
-		}	
+function Test-HasWritePermission {
+	param(
+		[Parameter(Mandatory = $true)]
+		[string]$Path
+	)
+
+	$tempFile = Join-Path -Path $Path -ChildPath ([Guid]::NewGuid().ToString() + ".tmp")
+
+	# TODO: use Invoke-WithRetry?
+
+	try {
+		New-Item -Path $tempFile -ItemType File -ErrorAction Stop | Out-Null
+
+		Remove-Item -Path $tempFile -ErrorAction Stop
+
+		return $true
+	}
+	catch {
+		return $false
 	}
 }
-
-# # Retrieve an MTP folder by path. Returns $null if part of the path is not found.
-# function Get-MTPFolderByPath {
-# 	[CmdletBinding(SupportsShouldProcess)]
-# 	param(
-# 		[Parameter(Mandatory = $true)]
-# 		[ValidateNotNullOrEmpty()]
-# 		[System.__ComObject]$ParentFolder,
-
-# 		[Parameter(Mandatory = $true)]
-# 		[ValidateNotNullOrEmpty()]
-# 		[string]$FolderPath,
-
-# 		[bool]$IsSource
-# 	)
-
-# 	$sections = $FolderPath.Trim('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
-# 	$folderIndex = 0
-
-# 	# Loop through each path subfolder in turn, creating folders if they don't already exist.
-# 	foreach ($directory in $sections) {
-# 		Write-Progress -Activity "Scanning Device Folders" -Status "Processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
-# 		$nextFolder = $ParentFolder.ParseName($directory)
-
-# 		# The source folder must exist.
-# 		if ($IsSource -and $null -eq $nextFolder) {
-# 			Write-Error ("Source directory ""$directory"" not found. Check the provided source directory path " +
-# 				"for errors and try again.") -Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
-# 		}
-
-# 		# If the folder doesn't already exist, try to create it.
-# 		if ($null -eq $nextFolder) {
-# 			# If the user is just listing the folder contents, report error and exit.
-# 			if ($ListFiles) {
-# 				Write-Error "Folder ""$directory"" not found. Please verify the folder path and try again."
-# 					-Category ObjectNotFound -TargetObject $directory -ErrorAction Stop
-# 			}
-
-# 			if (-not $PSCmdlet.ShouldProcess($directory, "Create directory")) {
-# 				# In the -WhatIf scenario, we do not simulate the creation of missing directories.
-# 				Write-Error "Cannot continue without creating new directory ""$directory"". Exiting."
-# 					-TargetObject $directory -ErrorAction Stop
-# 			}
-
-# 			$ParentFolder.NewFolder($directory)
-# 			$nextFolder = $ParentFolder.ParseName($directory)
-
-# 			# If creation failed, write error and stop.
-# 			if ($null -eq $nextFolder) {
-# 				Write-Error ("Could not create new directory ""$directory"". Please confirm you have adequate " +
-# 					"permissions on the device.") -Category PermissionDenied -TargetObject $directory -ErrorAction Stop
-# 			}
-
-# 			Write-Verbose "Created new directory ""$directory""."
-# 		}
-# 		# If the item was found but it isn't a folder, write error and stop.
-# 		elseif (-not $nextFolder.IsFolder) {
-# 			Write-Error "Cannot navigate to ""$FolderPath"". A file already exists called ""$directory""."
-# 				-Category WriteError -TargetObject $directory -ErrorAction Stop
-# 		}
-
-# 		# Continue looping until all subfolders have been navigated.
-# 		$ParentFolder = $nextFolder.GetFolder
-
-# 		$folderIndex++
-# 		Write-Progress -Activity "Scanning Device Folders" -Status "Completed processing ""$directory""" -PercentComplete (($folderIndex / $sections.Count) * 100)
-# 	}
-
-# 	Write-Progress -Activity "Scanning Device Folders" -Completed
-
-# 	return $ParentFolder
-# }
 
 # For more efficient processing, create a single regular expression to represent the filename patterns.
 function Convert-WildcardsToRegex {
