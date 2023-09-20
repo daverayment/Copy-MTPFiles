@@ -128,7 +128,6 @@ function Get-MTPIterator {
 
 		[Parameter(Mandatory = $true)]
 		[ValidateNotNullOrEmpty()]
-		[ValidatePattern('^[^\\]*$')]  # Ensure no backslashes
 		[string]$Path,
 
 		[switch]$CreateIfNotExists,
@@ -136,7 +135,7 @@ function Get-MTPIterator {
 		[switch]$ShowProgress
 	)
 
-	$sections = $Path.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+	$sections = $Path.Replace('\', '/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
 	$currentPath = ""
 
 	for ($i = 0; $i -lt $sections.Length; $i++) {
