@@ -1,109 +1,108 @@
 class SourceResolver {
-	[string]$Source
-	[bool]$IsDeviceSource = $false
+	[string]$Path
+	[bool]$IsOnDevice = $false
+	[bool]$IsOnHost = $false
 	[Object]$Device
 	[string[]]$FilenamePatterns
 	[bool]$SkipSameFolderCheck = $false
-	[string[]]$SourceSegments
+	[string[]]$PathSegments
 	[Object[]]$MatchedFolders
-	[string]$SourceDirectory
-	[string]$SourceFilePattern
+	[string]$Directory
+	[string]$FilePattern
 	[bool]$IsFileMatch = $false
 	[bool]$IsDirectoryMatch = $false
-	[Object]$SourceFolder	# resolved COM folder for the Source
-
-	# SourceResolver constructor which defaults $FilenamePatterns to "*" and $SkipSameFolderCheck to $false.
-	SourceResolver([string]$Source, [Object]$Device) {
-		$this.Initialise($Source, $Device, "*", $false)
-	}
-
-	# SourceResolver constructor which defaults $FilenamePatterns to "*".
-	SourceResolver([string]$Source, [Object]$Device, [bool]$SkipSameFolderCheck)
-	{
-		$this.Initialise($Source, $Device, "*", $SkipSameFolderCheck)
-	}
-
-	# SourceResolver constructor which defaults $SkipSameFolderCheck to $false.
-	SourceResolver([string]$Source, [Object]$Device, [string[]]$FilenamePatterns) {
-		$this.Initialise($Source, $Device, $FilenamePatterns, $false)
-	}
+	[Object]$Folder	# resolved COM folder for the Source
 
 	# SourceResolver constructor which allows all parameters to be set.
-	SourceResolver([string]$Source, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
-		$this.Initialise($Source, $Device, $FilenamePatterns, $SkipSameFolderCheck)
+	SourceResolver([string]$Path, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
+		$this.Initialise($Path, $Device, $FilenamePatterns, $SkipSameFolderCheck)
 	}
 
-	hidden [void] Initialise([string]$Source, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
-		$this.Source = $Source.Trim().Trim('/')
+	# Split the path string into segments and also retrieve the matching folders on the device.
+	hidden [void] GetMatchingDeviceFolders() {
+		$this.PathSegments = @($this.Path.Split('/'))
+		$this.MatchedFolders = @(Get-MTPIterator -ParentFolder $this.Device.GetFolder() -Path $this.Path)
+	}
+
+	hidden [void] Initialise([string]$Path, [Object]$Device, [string[]]$FilenamePatterns, [bool]$SkipSameFolderCheck) {
+		$this.Path = $Path.Trim().Trim('/')
 		$this.Device = $Device
 		$this.FilenamePatterns = $FilenamePatterns
 		$this.SkipSameFolderCheck = $SkipSameFolderCheck
 
-		if ($null -eq $this.Source -or $this.Source.Length -eq 0) {
-			throw "Source cannot be null or empty."
+		if (-not $this.Path) {
+			throw [System.ArgumentNullException]::new("Path cannot be null or empty.")
 		}
 
 		# The user likely intends to want to match all files in the current directory.
-		if ($this.Source -eq "*") {
-			$this.Source = "."
+		if ($this.Path -eq "*") {
+			$this.Path = "."
 		}
 
-		$this.IsDeviceSource = Get-IsDevicePath -Path $this.Source -Device $this.Device
+		# TODO: 'PathTarget' instead?
+		$pathType = Get-PathType -Path $this.Path -Device $Device
+		if ($pathType -eq [PathType]::Ambiguous) {
+			throw [System.ArgumentException]::new("Ambiguous path `"$($this.Path)`".")
+		}
 
-		if ($this.IsDeviceSource) {
-			$this.ResolveDeviceSource()
+		$this.IsOnHost = $pathType -eq [PathType]::Host
+		$this.IsOnDevice = $pathType -eq [PathType]::Device
+
+		if ($this.IsOnDevice) {
+			$this.ResolveDevicePath()
 		} else {
-			$this.ResolveHostSource()
+			$this.ResolveHostPath()
 		}
 
-		$this.ValidationChecks()
+		$this.Validate()
 
-		$this.SourceFolder = Get-COMFolder -Path $this.SourceDirectory -Device $this.Device
+		# If the file part of the path was specified and included wildcards, copy over to
+		# FilenamePatterns for regex conversion later.
+		if ($this.FilePattern) {
+			$this.FilenamePatterns = @($this.FilePattern)
+		}
+
+		$this.Folder = Get-COMFolder -Path $this.Directory -Device $this.Device
 	}
 
-	hidden [void] ResolveDeviceSource() {
-		if ($this.Source.Contains('\')) {
-			Write-Error ("Device path ""$($this.Source)"" cannot contain backslashes. " +
-				"Please use forward slashes instead.") -ErrorAction Stop -Category InvalidArgument
+	hidden [void] ResolveDevicePath() {
+		if ($this.Path.Contains('\')) {
+			throw [System.ArgumentException]::new("Device path `"$($this.Path)`" cannot contain backslashes. Please use forward slashes instead.")
 		}
 
-		# Split the path string into segments and also retrieve the matching folders on the device.
-		$this.SourceSegments = @($this.Source.Split('/'))
-		$this.MatchedFolders = @(Get-MTPIterator -ParentFolder $this.Device.GetFolder() -Path $this.Source)
+		# Populates PathSegments and MatchedFolders.
+		$this.GetMatchingDeviceFolders()
 
-		# Disallow host directories with the same name as a top-level device folder.
-		if (-not [IO.Path]::IsPathRooted($this.Source) -and
-			(-not $this.SkipSameFolderCheck) -and
-			(Test-Path -Path $this.SourceSegments[0] -PathType Container)) {
-				Write-Error ("`"$($this.SourceSegments[0])`" is also a top-level device folder. " +
-					"Please change to another directory and retry.") `
-					-ErrorAction Stop -Category InvalidArgument
+		# Disallow relative host paths which start with the same name as a top-level device folder. This is
+		# because of the difficulty of discerning between device and host when it is a single relative folder.
+		if ((-not $this.SkipSameFolderCheck) -and
+			(Test-Path -Path $this.PathSegments[0] -PathType Container)) {
+			throw [System.InvalidOperationException]::new("`"$($this.PathSegments[0])`" is also a top-level device folder. Change to another directory and retry.")
 		}
 
 		# A valid path will have the same number of matches returned as there are path string segments.
-		if ($this.MatchedFolders.Length -eq $this.SourceSegments.Length) {
+		if ($this.MatchedFolders.Length -eq $this.PathSegments.Length) {
 			if ($this.MatchedFolders[-1] -and $this.MatchedFolders[-1].IsFolder) {
 				# The entire path has been found as folders on the device.
-				$this.SourceDirectory = $this.SourceSegments -join '/'
-				$this.SourceFilePattern = $this.FilenamePatterns
+				$this.Directory = $this.PathSegments -join '/'
 				$this.IsDirectoryMatch = $true
 			} else {
 				# The last part of the path didn't match a folder, so assume it is a file.
-				$this.SourceDirectory = (Split-Path $this.Source -Parent).Replace('\', '/')
-				$this.SourceFilePattern = Split-Path $this.Source -Leaf
+				$this.Directory = (Split-Path $this.Path -Parent).Replace('\', '/')
+				$this.FilePattern = Split-Path $this.Path -Leaf
 				$this.IsFileMatch = $true
 			}
 		} else {
-			$allButLast = $this.SourceSegments[0..($this.SourceSegments.Length - 2)]
-			$wildcardMatches = $allButLast | Where-Object { $_ -match "[*?]" }
+			$allButLast = $this.PathSegments[0..($this.PathSegments.Length - 2)]
+			$wildcardMatches = $allButLast | Where-Object { $_ -match '[*?]' }
 			if ($wildcardMatches) {
 				$this.ReportWildcardInDirectoryError()
 			}
 		}
 	}
 
-	hidden [void] ResolveHostSource() {
-		$normalisedPath = [IO.Path]::GetFullPath($this.Source)
+	hidden [void] ResolveHostPath() {
+		$normalisedPath = Get-FullPath($this.Path)
 
 		if (Test-Path $normalisedPath) {
 			$this.IsFileMatch = (Test-Path $normalisedPath -PathType Leaf)
@@ -111,76 +110,80 @@ class SourceResolver {
 
 			# Disallow both a file and a directory match (this can happen if wildcards are supplied.)
 			if ($this.IsFileMatch -and $this.IsDirectoryMatch) {
-				Write-Error "Specified source path `"$($this.Source)`" cannot be both a file and a directory." `
-					-ErrorAction Stop -Category InvalidArgument
+				throw [System.ArgumentException]::new("Path `"$($this.Path)`" cannot be both a file and a directory.")
 			}
 
-			$this.SourceDirectory = if ($this.IsFileMatch) { Split-Path $normalisedPath -Parent } else { $normalisedPath }
-			$this.SourceFilePattern = if ($this.IsFileMatch) { Split-Path $normalisedPath -Leaf } else { $this.FilenamePatterns }
+			$this.Directory = if ($this.IsFileMatch) { Split-Path $normalisedPath -Parent } else { $normalisedPath }
+			$this.FilePattern = if ($this.IsFileMatch) { Split-Path $normalisedPath -Leaf } else { '' }
 
 			# Check for wildcards in the directory part of the source path.
-			if ($this.SourceDirectory -match "[*?]") {
+			if ($this.Directory -match '[*?]') {
 				$this.ReportWildcardInDirectoryError()
 			}
 		}
 	}
 
 	hidden [void] ReportWildcardInDirectoryError() {
-		Write-Error "Wildcard characters are not allowed in the directory portion of the source path." `
-			-ErrorAction Stop -Category InvalidArgument
+		throw [System.ArgumentException]::new("Wildcard characters are not allowed in the directory portion of the path.")
 	}
 
-	hidden [void] ValidationChecks() {
+	hidden [void] ValidateMatchFound() {
 		if (-not $this.IsFileMatch -and -not $this.IsDirectoryMatch) {
-			Write-Error "Specified source path `"$($this.Source)`" not found." -ErrorAction Stop -Category ObjectNotFound
+			throw [System.IO.FileNotFoundException]::new("Path `"$($this.Path)`" not found.")
 		}
+	}
 
-		if (-not $this.IsDeviceSource) {
-			# NB: we do not need to do a check for the device here because it has already been done above.
-			if (-not (Test-Path -Path $this.SourceDirectory)) {
-				Write-Error "Specified source directory `"$($this.SourceDirectory)`" does not exist." `
-					-ErrorAction Stop -Category ObjectNotFound
-			}		
+	hidden [void] ValidateHostPathExists() {
+		if ($this.IsOnHost -and (-not (Test-Path -Path $this.Directory))) {
+			throw [System.IO.DirectoryNotFoundException]::new("Directory `"$($this.Directory)`" not found.")
 		}
+	}
 
-		# At this point, we know that the folders part of the source path is valid.
-
-		# Process wildcards or specific file in the source path.
-		if (($this.SourceFilePattern -match "\*|\?")) {
+	# Process wildcards or specific file in the source path.
+	hidden [void] ValidateWildcards() {
+		if (($this.FilePattern -match '[*?]')) {
 			if ($this.FilenamePatterns -ne "*") {
-				Write-Error ("Cannot specify wildcards in the Source parameter when the FilenamePatterns " +
-					"parameter is also provided.") -ErrorAction Stop -Category InvalidArgument
+				throw [System.ArgumentException]::new("Cannot specify wildcards in the path parameter when the FilenamePatterns " +
+					"parameter is also provided.")
 			}
 		} else {
 			$fileExists = $false
 
 			# $SourceFilePattern should contain the exact filename we're looking for.
-			if ($this.IsDeviceSource) {
+			if ($this.IsOnDevice) {
 				$lastFolder = if ($this.MatchedFolders[-1] -and $this.MatchedFolders[-1].IsFolder) {
 					$this.MatchedFolders[-1]
 				} else {
 					$this.MatchedFolders[-2]
 				}
 
-				if ($lastFolder.ParseName($this.SourceSegments[-1])) {
+				if ($lastFolder.ParseName($this.PathSegments[-1])) {
 					$fileExists = $true
 				}
 			} else {
-				$normalisedPath = [IO.Path]::GetFullPath($this.Source)
+				$normalisedPath = Get-FullPath($this.Path)
 				$fileExists = $(Test-Path -Path $normalisedPath -PathType Leaf)
 			}
 
 			if ($fileExists) {
 				if ($this.FilenamePatterns -ne "*") {
 					# We do not allow wildcard patterns when the source resolves to a single file.
-					Write-Error "Cannot provide FilenamePatterns parameter when the Source is a file." `
-						-ErrorAction Stop -Category InvalidArgument					
+					throw "Cannot provide FilenamePatterns parameter when the path is a file."
 				}
 			} else {
 				# If the source path refers to a single file, it must exist.
-				Write-Error "Specified source path `"$($this.Source)`" not found." `
-					-ErrorAction Stop -Category ObjectNotFound
+				throw "Specified path `"$($this.Path)`" not found."
 			}
 		}
+	}
+
+	hidden [void] Validate() {
+		$this.ValidateMatchFound()
+
+		$this.ValidateHostPathExists()	# NB: we do not need to do a check for the device here because it has already been done above.
+
+		# At this point, we know that the folders part of the source path is valid.
+
+		$this.ValidateWildcards()
 	}
 }
