@@ -86,17 +86,26 @@ Iterates through an MTP folder structure, starting from a specified parent folde
 .DESCRIPTION
 The `Get-MTPIterator` function provides an iterator through the MTP folder structure. 
 Starting from a given parent folder, the function traverses the path provided and yields each 
-item (folder or file) to the caller. If an item in the specified path doesn't exist or if a non-folder 
-item is encountered in the path before the last segment, the iteration stops.
+item (folder or file) to the caller. If an item in the specified path doesn't exist or if a
+non-folder item is encountered in the path before the last segment, either the function will
+create the missing folder (if the CreateIfNotExists switch is set) or will stop iterating after
+yielding a final $null.
 
 .PARAMETER ParentFolder
 A COM object representing the starting point of the folder structure to iterate through. 
-This is usually an MTP device folder or2 any other folder within the MTP device structure.
+This is usually an MTP device folder or any other folder within the MTP device structure.
 
 .PARAMETER Path
 A string representing the folder structure's path to iterate through. The path should be 
 provided in a forward-slash-separated format, e.g., "Internal storage/Downloads/My Files". 
-Leading and trailing slashes are optional.
+Leading and trailing slashes are optional. Backslashes will be automatically converted to forward
+slashes.
+
+.PARAMETER CreateIfNotExists
+If this switch is set, the function will create missing folders if they don't exist.
+
+.PARAMETER ShowProgress
+If this switch is set, the function will display a progress bar while iterating through the folders.
 
 .EXAMPLE
 $device = Get-TargetDevice
@@ -108,8 +117,6 @@ This example begins iteration at the device's root folder and progresses through
 caller.
 
 .NOTES
-- If the CreateIfNotExists switch is set, the function will attempt to create missing folders. Otherwise,
-  the iteration will stop.
 - It's the caller's responsibility to interpret the yielded item and check if it's a folder or a file.
   The IsFolder property can be used for this purpose, if the item is non-null. $null indicates a non-match.
 #>
@@ -144,7 +151,8 @@ function Get-MTPIterator {
 		try {
 			$item = $ParentFolder.ParseName($section)
 		} catch {
-			Write-Error "Could not parse path `"$currentPath`". Ensure it's a valid path." -ErrorAction Stop -Category InvalidArgument
+			Write-Error "Could not parse path `"$currentPath`". Ensure it's a valid path." `
+				-ErrorAction Stop -Category InvalidArgument
 		}
 
 		# If the section doesn't exist and CreateIfNotExists is set, create it.
@@ -192,7 +200,8 @@ function Get-DeviceCOMFolder {
 	if ($FolderPath -eq '/') {
 		$result = $ParentFolder
 	} else {
-		$results = @(Get-MTPIterator -ParentFolder $ParentFolder -Path $FolderPath -ShowProgress -CreateIfNotExists:$CreateIfNotExists)
+		$results = @(Get-MTPIterator -ParentFolder $ParentFolder -Path $FolderPath `
+			-ShowProgress -CreateIfNotExists:$CreateIfNotExists)
 		$result = $results[-1]
 	}
 
