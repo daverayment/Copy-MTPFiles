@@ -1,3 +1,9 @@
+enum PathType {
+	Host
+	Device
+	Ambiguous
+}
+
 # Functions related to the MTP device and COM folders.
 if (Get-Module MTPDevice) {
 	Write-Debug "Removing MTPDevice module."
@@ -9,6 +15,8 @@ Import-Module "$PSScriptRoot\MTPDevice.psm1"
 . "$PSScriptRoot\SourceResolver.ps1"
 # Ancillary functions.
 . "$PSScriptRoot\Copy-MTPFilesFunctions.ps1"
+# Functions shared with testing.
+. "$PSScriptRoot\Copy-MTPFilesSharedFunctions.ps1"
 
 
 # Custom format for file listings to keep it reasonably similar to Get-ChildItem.
@@ -16,36 +24,6 @@ Update-FormatData -PrependPath "$PSScriptRoot\MTPFileFormat.ps1xml"
 
 Set-StrictMode -Version 2.0
 
-
-# Create and return a custom object representing the source or destination directory information.
-function Set-TransferObject {
-	[CmdletBinding(SupportsShouldProcess)]
-	param([string]$Directory, [bool]$IsSource)
-
-    # TODO: rename fn to Get-TransferObject
-    #     Integrate the Initialize-SourceParameter fn?
-
-	$Directory = $Directory.TrimEnd('/').TrimEnd('\\')
-
-	$OnHost = Test-IsHostDirectory -DirectoryPath $Directory
-	if ($OnHost) {
-		Test-DirectoryExists -Path $Directory -IsSource $IsSource
-		$Directory = Convert-PathToAbsolute -Path $Directory -IsSource $IsSource
-	}
-
-	$Folder = Get-COMFolder -DirectoryPath $Directory -IsSource $IsSource
-
-	if ($null -eq $Folder -and $PSCmdlet.ShouldProcess($Directory, "Directory error check")) {
-		Write-Error "Folder ""$Directory"" could not be found or created." -ErrorAction Stop
-	}
-	Write-Debug "Found folder ""$Directory""."
-
-	[PSCustomObject]@{
-		Directory = $Directory
-		Folder = $Folder
-		OnHost = $OnHost
-	}
-}
 
 # Check script parameters and setup script-level variables for source, destination and temporary directories.
 function Initialize-TransferEnvironment {
@@ -196,7 +174,6 @@ function Get-DeviceList {
 	}
 }
 
-
 function Main {
 	[CmdletBinding(SupportsShouldProcess)]
 	param (
@@ -253,12 +230,14 @@ function Main {
 			$Source = $ListFiles
 		}
 
-		# We need to do source path validation and set up before any transfers or file listing.
+		# Validate and process the source parameters before any transfers or file listing.
 		# TODO: change back to $false after testing.
 		$sourceInfo = [SourceResolver]::new($Source, $device, $FilenamePatterns, $true)
-		$Source = $sourceInfo.SourceDirectory
-		$FilenamePatterns = $sourceInfo.FilenamePatterns
-		# $sourceInfo
+		$Source = $sourceInfo.Directory
+		if ($sourceInfo.FilePattern) {
+			# The path included a filename or file pattern. It should be converted into the matching regex.
+			$FilenamePatterns = $sourceInfo.FilePattern
+		}
 
 		# Now the regex can be built, which is needed for both transfers and ListFiles.
 		$regexPattern = Convert-WildcardsToRegex -Patterns $FilenamePatterns
@@ -266,28 +245,28 @@ function Main {
 		if ($PSBoundParameters.ContainsKey("ListFiles")) {
 			return Get-FileList -Path $Source -Device $device -RegexPattern $regexPattern
 		}
-		
+
 		Reset-TemporaryDirectory
 
 		# Initialise the destination info.
-		$destination = $DestinationDirectory.Trim().TrimEnd('/').TrimEnd('\')
-		if (Test-IsHostDirectory -DirectoryPath $destination) {
-			$destination = Convert-PathToAbsolute -Path $destination -IsSource $false
-		}
-	
-		$destinationFolder = Get-COMFolder -Path $destination -Device $device -CreateIfNotExists $true
-	
-		if ($null -eq $destinationFolder -and $PSCmdlet.ShouldProcess($DestinationDirectory, "Directory error check")) {
-			Write-Error "Folder ""$DestinationDirectory"" could not be found or created." -ErrorAction Stop
-		}
-		Write-Debug "Found folder ""$DirectoryDestination""."
+		# $destination = $DestinationDirectory.Trim().TrimEnd('/').TrimEnd('\')
+		# if (Test-IsHostDirectory -DirectoryPath $destination) {
+		# 	$destination = Convert-PathToAbsolute -Path $destination -IsSource $false
+		# }
+
+		# $destinationFolder = Get-COMFolder -Path $destination -Device $device -CreateIfNotExists
+
+		# if ($null -eq $destinationFolder) {
+		# 	Write-Error "Folder ""$DestinationDirectory"" could not be found or created." -ErrorAction Stop
+		# }
+		# Write-Debug "Found folder ""$DestinationDirectory""."
 
 		# Initialize-TransferEnvironment
 
 		return
 
 		# For moves, we store information about the source files for later deletion.
-		$script:SourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
+		$sourceFilesToDelete = New-Object System.Collections.Generic.Queue[PSObject]
 
 		# Function to process a single item.
 		function Invoke-ItemTransfer {
@@ -303,22 +282,23 @@ function Main {
 		}
 
 		# Determine the matching files and transfer them.
-		if ($script:SourceDetails.OnHost) {
-			# It is slow to iterate over all the files with COM, so use a hybrid approach.
-			Get-ChildItem -Path $script:SourceDetails.Directory -File |
-				Where-Object { $_.Name -match $regexPattern } |
-				ForEach-Object {
-					$comFileItem = $script:SourceDetails.Folder.ParseName($_.Name)
-					Invoke-ItemTransfer -Item $comFileItem
-				}
-		}
-		else {
+		if ($sourceInfo.IsDeviceSource) {
 			# When using MTP, we have no alternative but to iterate over all the files.
-			foreach ($item in $script:SourceDetails.Folder.Items()) {
+			foreach ($item in $sourceInfo.SourceFolder.Items()) {
 				if ($item.Name -match $regexPattern) {
 					Invoke-ItemTransfer -Item $item
 				}
 			}
+		}
+		else {
+			# It is slow to iterate over all the files with COM, so use a hybrid approach.
+			# Get-ChildItem -Path $script:SourceDetails.Directory -File |
+			Get-ChildItem -Path $sourceInfo.Directory -File |
+				Where-Object { $_.Name -match $regexPattern } |
+				ForEach-Object {
+					$comFileItem = $sourceInfo.Folder.ParseName($_.Name)
+					Invoke-ItemTransfer -Item $comFileItem
+				}
 		}
 
 		if ($numMatches -eq 0) {
@@ -326,11 +306,11 @@ function Main {
                 Write-Warning "No matching files found."
             }
             else {
-                Write-Host "No matching files found."
+                Write-Information "No matching files found."
             }
 		}
 		else {
-			Write-Host "$numMatches matching file(s) found. $numTransfers file(s) transferred."
+			Write-Information "$numMatches matching file(s) found. $numTransfers file(s) transferred."
 		}
 
 		if ($PSCmdlet.ShouldProcess("Temporary files", "Delete")) {
