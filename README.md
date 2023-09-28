@@ -116,7 +116,7 @@ Copy-MTPFiles -Destination ".\TestFolder" -FilePatterns "SomeFile.txt"
 ## Parameter Reference
 |Parameter|Aliases|Description|Example
 |--|--|--|--
-|`SourceDirectory`|`SourceFolder`<br/>`Source`<br/>`s`|Sets the path to the source directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `Copy-MTPFiles -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
+|`Directory`|`SourceFolder`<br/>`Source`<br/>`s`|Sets the path to the source directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.| `Copy-MTPFiles -Source "SDCard/MyProject" -Destination "C:\ProjectBackup"`
 |`DestinationDirectory`|`DestinationFolder`<br/>`Destination`<br/>`d`|Sets the path to the destination directory. Defaults to the current directory if not specified. Paths may be absolute or relative host paths, or paths on the attached device.|`Copy-MTPFiles -Source "Internal storage/WhatsApp/Media" -Destination "D:\Phone backup"`
 |`Move`||When this parameter is included, files are moved instead of copied.|`Copy-MTPFiles -Source "Internal storage/DCIM/Camera" -Destination "C:\Users\Me\Pictures" -Move`
 |`ListDevices`|`GetDevices`<br/>`ld`|Lists attached MTP-compatible devices. Use this option to obtain a device name for use with the `-DeviceName` parameter. If this parameter is present, all other parameters will be ignored.|`Copy-MTPFiles -ListDevices`

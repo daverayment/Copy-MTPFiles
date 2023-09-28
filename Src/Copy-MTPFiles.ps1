@@ -2,7 +2,7 @@
 .SYNOPSIS
     Transfers files to or from a portable device via MTP (Media Transfer Protocol).
 .DESCRIPTION
-    The Media Transfer Protocol (MTP) facilitates file transfers between computers and portable devices like smartphones, cameras, and media players. 
+    The Media Transfer Protocol (MTP) facilitates file transfers between computers and portable devices like smartphones, cameras, and media players.
 
 	This script integrates MTP transfers into your PowerShell workflow. It supports features such as file listing (on host and device), device enumeration and pattern matching to enhance and simplify the process.
 
