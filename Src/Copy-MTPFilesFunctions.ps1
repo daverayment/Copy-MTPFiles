@@ -165,6 +165,7 @@ function Invoke-WithRetry {
 	}
 }
 
+# Confirm whether the path can be written to by the current user.
 function Test-HasWritePermission {
 	param(
 		[Parameter(Mandatory = $true)]
@@ -187,7 +188,7 @@ function Test-HasWritePermission {
 	}
 }
 
-# Generate a unique filename in the destination directory. If the passed-in filename already exists, a new
+# Generate a unique filename in the destination folder. If the passed-in filename already exists, a new
 # filename is generated with a numeric suffix in parentheses. An upper-bound of 1000 files with the same
 # basename is used. If this limit is exceeded, an exception is thrown.
 function Get-UniqueFilename {
@@ -259,6 +260,8 @@ function Copy-SourceFileToTemporaryDirectory {
 		[System.__ComObject]$FileItem
 	)
 
+	# TODO: pass in the parameters instead of using the script-level variables.
+
 	$filename = $FileItem.Name
 
 	# Always copy. If it's a move operation, the source file will be cleaned up post-transfer.
@@ -268,7 +271,8 @@ function Copy-SourceFileToTemporaryDirectory {
 	if ($script:DestinationDetails.Folder.ParseName($filename))
 	{
 		$newName = Get-UniqueFilename -Folder $script:DestinationDetails.Folder -Filename $filename
-		Write-Warning "A file with the same name already exists. The source file `"$filename`" will be transferred as `"$newName`"."
+		Write-Warning ("A file with the same name already exists. " +
+			"The source file `"$filename`" will be transferred as `"$newName`".")
 
 		$tempFilePathOld = Join-Path -Path $script:TempDetails.Directory -ChildPath $filename
 		$tempFilePathNew = Join-Path -Path $script:TempDetails.Directory -ChildPath $newName

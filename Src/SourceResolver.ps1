@@ -67,7 +67,8 @@ class SourceResolver {
 
 	hidden [void] ResolveDevicePath() {
 		if ($this.Path.Contains('\')) {
-			throw [System.ArgumentException]::new("Device path `"$($this.Path)`" cannot contain backslashes. Please use forward slashes instead.")
+			throw [System.ArgumentException]::new("Device path `"$($this.Path)`" cannot contain " +
+				"backslashes. Please use forward slashes instead.")
 		}
 
 		# Populates PathSegments and MatchedFolders.
@@ -77,7 +78,8 @@ class SourceResolver {
 		# because of the difficulty of discerning between device and host when it is a single relative folder.
 		if ((-not $this.SkipSameFolderCheck) -and
 			(Test-Path -Path $this.PathSegments[0] -PathType Container)) {
-			throw [System.InvalidOperationException]::new("`"$($this.PathSegments[0])`" is also a top-level device folder. Change to another directory and retry.")
+			throw [System.InvalidOperationException]::new("`"$($this.PathSegments[0])`" is also a " +
+				"top-level device folder. Change to another directory or use absolute paths.")
 		}
 
 		# A valid path will have the same number of matches returned as there are path string segments.
@@ -143,13 +145,13 @@ class SourceResolver {
 	hidden [void] ValidateWildcards() {
 		if (($this.FilePattern -match '[*?]')) {
 			if ($this.FilenamePatterns -ne "*") {
-				throw [System.ArgumentException]::new("Cannot specify wildcards in the path parameter when the FilenamePatterns " +
-					"parameter is also provided.")
+				throw [System.ArgumentException]::new("The path cannot contain wildcards " +
+					"when the FilenamePatterns parameter is also provided.")
 			}
-		} else {
+		} elseif ($this.IsFileMatch) {
 			$fileExists = $false
 
-			# $SourceFilePattern should contain the exact filename we're looking for.
+			# FilePattern should contain the exact filename we're looking for.
 			if ($this.IsOnDevice) {
 				$lastFolder = if ($this.MatchedFolders[-1] -and $this.MatchedFolders[-1].IsFolder) {
 					$this.MatchedFolders[-1]
